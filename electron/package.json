@@ -1,0 +1,17 @@
+{
+  "name": "trace-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Trace independent debugging companion (Electron frontend, Python backend)",
+  "main": "dist/main/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.js",
+    "start": "electron .",
+    "smoke": "electron . --smoke"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "electron": "^38.0.0",
+    "typescript": "^5.6.0"
+  }
+}

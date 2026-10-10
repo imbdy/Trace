@@ -30,11 +30,27 @@ workflows, no reuse of external endpoints. Works when writing code alone.
 Pipeline: `receive → screenshot → context → project_root → error_extract →
 read_files → diagnostics → model_analysis → validate → report`.
 
-**Desktop UI (`trace_ui/`):** the system is kept separated into the five
-components in `docs/ARCHITECTURE.md` — desktop character → orchestrator →
-Ollama `gemma4:31b-cloud` → evidence verification → report window.
-Run it with `python main.py` (`--backend-only` for the server alone).
-Layering is enforced by `tests/test_layering.py`.
+**Desktop frontend (`electron/`, primary):** Electron + TypeScript + HTML/CSS —
+character bar (`src/renderer/character.*`), results window
+(`src/renderer/results.*`), main-process backend supervisor + IPC
+(`src/main/`), isolated preload bridge (`src/preload.ts`). The system is kept
+separated into the five components in `docs/ARCHITECTURE.md` — desktop
+character → orchestrator → Ollama `gemma4:31b-cloud` → evidence verification
+→ report window. `trace_ui/` (tkinter) is retained as a zero-dependency
+fallback: `python main.py` (`--backend-only` for the server alone).
+Layering is enforced by `tests/test_layering.py` + `tests/test_frontend_guards.py`.
+
+```powershell
+cd C:\Users\abood\PycharmProjects\Trace\electron
+npm install
+npm run build
+npx electron . --project-dir C:\path\to\your\project
+```
+
+The app spawns `python main.py --backend-only` itself (loopback only) and
+reuses a running backend if one answers health. Requirements: Node 20+,
+Python visible as `python` (or set `TRACE_PYTHON`), and
+`ollama serve` + `ollama pull gemma4:31b-cloud` for real model analysis.
 
 ## Setup
 
