@@ -7,9 +7,9 @@ except the composition roots, which only wire startup (never business logic).
 ┌─────────────────────────────────────────────────────────┐
 │ 1. Trace desktop character  ··· electron/src/renderer/  │
 │    your request and character interactions              │
-│    character.* (canvas bar + spring eyes + input panel) │
-│    primary frontend is Electron; trace_ui/ (tkinter) is │
-│    retained as a zero-dependency fallback               │
+│    Neo's leaf design, transplanted: hearthling.js face  │
+│    (verbatim), shell/leaf chrome (adapted), trace.js    │
+│    driver; composer + progress stitch + verdict         │
 └──────────────────────────┬──────────────────────────────┘
                            │ plain-language request (preload bridge → IPC)
                            ▼
@@ -55,7 +55,7 @@ except the composition roots, which only wire startup (never business logic).
 | L4 downstream-only | `validator` ← only `project_inspector` + `schemas`; never calls model/orchestrator |
 | L2 orchestrates, doesn't host | `investigation_engine` never imports `server`; `server` hosts the engine and never touches evidence/model modules directly |
 | Transport is dumb | `traceApi.ts` is fetch-only HTTP (start/stream/cancel/open-file); renderer files are import-free plain scripts behind the preload bridge |
-| L1 sees only motion | character renderer uses the bridge + its own spring/eye code; no backend URLs, no model access (enforced by `tests/test_frontend_guards.py`) |
+| L1 Neo craft, Trace wiring | character renderer uses the bridge + Neo's spring/eye/poke/tuck code; no backend URLs, no model access, no Neoma (enforced by `tests/test_frontend_guards.py`, incl. face-verbatim fidelity) |
 | L5 renders backend JSON | results renderer builds Diagnosis/Locations/Fix/Evidence from status JSON; incomplete states render as honest banners |
 | Single bridge | Only composition roots (`electron/src/main/main.ts` spawn + IPC, `trace_ui/app.py`, `main.py` CLI) reference both sides, for startup wiring only |
 

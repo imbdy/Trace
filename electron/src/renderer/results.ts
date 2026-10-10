@@ -88,7 +88,7 @@ function findingCard(f: RendererFinding): HTMLElement {
 
 async function openAt(f: RendererFinding): Promise<void> {
   if (!f.file_path) return;
-  const res = await window.traceAPI.openFile(
+  const res = await window.trace.openFile(
     f.file_path, f.start_line && f.start_line > 0 ? f.start_line : undefined);
   const note = el("p", "open-note",
     res && (res as { ok?: boolean }).ok
@@ -191,7 +191,7 @@ function render(status: RendererStatus): void {
   }
 }
 
-window.traceAPI.onReport((status) => {
+window.trace.onReport((status) => {
   try {
     render(status as RendererStatus);
   } catch (e) {
