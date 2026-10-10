@@ -53,8 +53,9 @@
     } catch (e) {}
   }
   var fitTimer = null;
-  // Explicit final sizes: the shell widens rightward, height pinned to the
-  // collapsed height so expansion never grows downward.
+  // Explicit final sizes: the leaf widens (main re-perches the window at
+  // every size, so he stays in the middle), height pinned to the collapsed
+  // height so expansion never grows downward.
   var OPEN_W = 732;   // 660 leaf + 44 sill pads + 28 shadow pad
   var CLOSED_W = 408; // 336 leaf + 44 sill pads + 28 shadow pad
   function requestFitSettled() {

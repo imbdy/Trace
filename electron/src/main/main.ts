@@ -2,8 +2,9 @@
 //
 // Window management is Neo's craft, kept intact: the native window hugs the
 // visible cluster (face + unfolding leaf), perches top-center with a slight
-// overhang, resizes only on renderer request within clamps, re-anchors on
-// display changes, and lives in the tray. What changed: the Neoma watcher
+// overhang, resizes only on renderer request within clamps — re-perching at
+// every size so he never drifts off-centre — re-anchors on display changes,
+// and lives in the tray. What changed: the Neoma watcher
 // (core/watch/brief/vision) is gone; instead this spawns Trace's Python
 // backend, runs investigations through it, and owns the results window.
 // Renderer processes stay dumb; all backend I/O lives here in main.
@@ -40,6 +41,47 @@ import { InvestigationStatus, KNOWN_STAGES, ProgressEvent } from "../shared/prot
 const INITIAL_W = 360 + 28;
 const INITIAL_H = 170 + 28;
 const MIN_W = 200, MAX_W = 760, MIN_H = 160, MAX_H = 520;
+
+// Trace app identity + icon. Single source: <repo>/assets/icons (SVG master,
+// PNG rasters, multi-size ICO). copy-assets.js mirrors them into dist/icons
+// so packaged builds resolve without the source tree.
+const APP_ID = "Trace.Trace";
+try {
+  app.setAppUserModelId(APP_ID);
+} catch {
+  /* ignore: non-Windows or early init */
+}
+try {
+  app.setName("Trace");
+} catch {
+  /* ignore */
+}
+function traceIconFile(preferIco: boolean): string | undefined {
+  const fs = require("fs") as typeof import("fs");
+  const names = preferIco
+    ? ["trace.ico", "trace.png", "trace-256.png"]
+    : ["trace.png", "trace-32.png", "trace.ico"];
+  const bases: string[] = [];
+  try {
+    bases.push(path.join(__dirname, "..", "icons")); // packaged (dist/icons)
+    bases.push(path.join(__dirname, "..", "..", "..", "assets", "icons")); // dev
+    const res = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+    if (res) bases.push(path.join(res, "assets", "icons"));
+  } catch {
+    /* ignore */
+  }
+  for (const base of bases) {
+    for (const n of names) {
+      try {
+        const p = path.join(base, n);
+        if (fs.existsSync(p)) return p;
+      } catch {
+        /* next */
+      }
+    }
+  }
+  return undefined;
+}
 
 const argv = process.argv.slice(1);
 const SMOKE = argv.includes("--smoke");
@@ -118,6 +160,8 @@ function createCharacter(): BrowserWindow {
     y: at.y,
     width: INITIAL_W,
     height: INITIAL_H,
+    icon: traceIconFile(process.platform === "win32"),
+    title: "Trace",
     transparent: true,
     frame: false,
     resizable: false,
@@ -166,6 +210,7 @@ function createResults(): BrowserWindow {
     minWidth: 560,
     minHeight: 420,
     title: "Trace — Investigation results",
+    icon: traceIconFile(process.platform === "win32"),
     autoHideMenuBar: true,
     show: false,
     webPreferences: {
@@ -385,7 +430,19 @@ function buildTray(): void {
     }
   };
   try {
-    tray = new Tray(dot("#5be08f"));
+    // Prefer the real Trace tray icon; fall back to the legacy dot so a
+    // missing asset never breaks startup (or the other AI's work).
+    let trayImage: Electron.NativeImage | undefined;
+    try {
+      const file = traceIconFile(false);
+      if (file) {
+        const img = nativeImage.createFromPath(file);
+        trayImage = img.isEmpty() ? undefined : img.resize({ width: 16, height: 16 });
+      }
+    } catch {
+      trayImage = undefined;
+    }
+    tray = new Tray(trayImage && !trayImage.isEmpty() ? trayImage : dot("#5be08f"));
     tray.setToolTip("Trace — debugging companion");
     tray.on("click", () => { try { charWin && charWin.show(); } catch { /* ignore */ } });
     refresh();
@@ -407,17 +464,13 @@ function setupIpc(): void {
       const [cw, ch] = charWin.getSize();
       if (SMOKE) console.error(`[smoke] resize asked ${ww}x${hh} (have ${cw}x${ch})`);
       if (cw === ww && ch === hh) return;
-      if (ww < cw) {
-        // Shrink via ONE atomic setBounds: a back-to-back setSize +
-        // setPosition silently drops the size on some Windows drivers.
-        const at = perchPos(ww, hh);
-        charWin.setBounds({ x: at.x, y: at.y, width: ww, height: hh });
-      } else {
-        // Grow (or same width): keep the current top-left so the shell
-        // widens rightward with a stable left edge and vertical alignment.
-        const [cx, cy] = charWin.getPosition();
-        charWin.setBounds({ x: cx, y: cy, width: ww, height: hh });
-      }
+      // ONE atomic setBounds (a back-to-back setSize + setPosition silently
+      // drops the size on some Windows drivers), and ALWAYS re-perch —
+      // growing used to keep the top-left, so unfolding the leaf pushed the
+      // whole box to the right of the middle. Every size now lands on the
+      // same perch, so extending him never moves him off-centre.
+      const at = perchPos(ww, hh);
+      charWin.setBounds({ x: at.x, y: at.y, width: ww, height: hh });
     } catch {
       /* ignore */
     }
@@ -536,7 +589,8 @@ async function runSmoke(projectDir: string): Promise<number> {
     focused: document.activeElement ? document.activeElement.id : '',
   }))()`);
   A(openState.open === true, "shell click expands the chat");
-  A(hb1.width === 732 && hb1.x === hb0.x, "expansion grows rightward, left stable", JSON.stringify(hb1));
+  A(hb1.width === 732 && hb1.x + hb1.width / 2 === hb0.x + hb0.width / 2,
+    "expansion re-perches: he stays in the middle", JSON.stringify(hb1));
   A(Math.abs(hb1.height - hb0.height) <= 6, "expansion keeps height", `${hb0.height} -> ${hb1.height}`);
   A(openState.focused === "ask-text", "composer focused, ready to type");
   await charWin.webContents.executeJavaScript(`document.querySelector('#leaf-fold').click()`);
@@ -546,7 +600,7 @@ async function runSmoke(projectDir: string): Promise<number> {
   }))()`);
   const hb2 = charWin.getBounds();
   A(foldState.open === false, "fold handler ran (leaf class removed)", JSON.stringify(foldState));
-  A(hb2.width === 408, "fold collapses back", JSON.stringify(hb2));
+  A(hb2.width === 408 && hb2.x === hb0.x, "fold collapses back, still in the middle", JSON.stringify(hb2));
 
   const emptyRes = await charWin.webContents.executeJavaScript(
     `window.trace.submit('   ').then((r) => JSON.stringify(r))`);

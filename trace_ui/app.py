@@ -68,6 +68,16 @@ class TraceApp:
     def start(self, autostart_backend: bool = True):
         self.root = tk.Tk()
         try:
+            from .icons import apply_window_icon, init_process_identity
+            init_process_identity()
+            try:
+                self.root.title("Trace")
+            except Exception:
+                pass
+            apply_window_icon(self.root)
+        except Exception:
+            pass
+        try:
             self.root.withdraw()  # companion is the visible window
         except Exception:
             pass
@@ -91,6 +101,11 @@ class TraceApp:
         win = tk.Toplevel(self.root)
         # Companion manages its own top-level behavior; the hidden Tk root
         # only hosts the event loop + results windows.
+        try:
+            from .icons import apply_window_icon
+            apply_window_icon(win)
+        except Exception:
+            pass
         return win
 
     def shutdown(self):
@@ -242,6 +257,11 @@ class TraceApp:
                     try:
                         if self.results is not None:
                             self.results.show(status)
+                            try:
+                                from .icons import apply_window_icon
+                                apply_window_icon(self.results.win)
+                            except Exception:
+                                pass
                     except Exception:
                         pass
         except queue.Empty:
