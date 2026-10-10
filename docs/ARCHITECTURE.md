@@ -5,26 +5,29 @@ except the composition roots, which only wire startup (never business logic).
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ 1. Trace desktop character  ··· trace_ui/               │
+│ 1. Trace desktop character  ··· electron/src/renderer/  │
 │    your request and character interactions              │
-│    companion.py (window) + character.py (motion/stages) │
+│    character.* (canvas bar + spring eyes + input panel) │
+│    primary frontend is Electron; trace_ui/ (tkinter) is │
+│    retained as a zero-dependency fallback               │
 └──────────────────────────┬──────────────────────────────┘
-                           │ plain-language request
+                           │ plain-language request (preload bridge → IPC)
                            ▼
 ┌─────────────────────────────────────────────────────────┐
 │ 2. Investigation orchestrator · trace_backend/          │
 │    Screenshot · Project context · Logs · Diagnostics    │
 │    investigation_engine.py drives: screenshot_service,  │
 │    context_collector, project_inspector (+ server.py    │
-│    hosts it over loopback HTTP; api_client.py is the    │
-│    UI's stdlib-only transport to that HTTP API)         │
+│    hosts it over loopback HTTP; electron/src/main/     │
+│    traceApi.ts is the UI's transport to that HTTP API)  │
 └──────────────────────────┬──────────────────────────────┘
                            │ redacted evidence bundle only
                            ▼
 ┌─────────────────────────────────────────────────────────┐
 │ 3. Ollama — gemma4:31b-cloud ··· ollama_client.py       │
 │    Reasoning, root-cause analysis, and explanations     │
-│    standalone: imports only config + stdlib             │
+│    standalone: imports only config + stdlib. Only the   │
+│    Python backend ever contacts Ollama — never Electron │
 └──────────────────────────┬──────────────────────────────┘
                            │ unverified model JSON
                            ▼
@@ -36,10 +39,10 @@ except the composition roots, which only wire startup (never business logic).
                            │ verified report
                            ▼
 ┌─────────────────────────────────────────────────────────┐
-│ 5. Investigation report window · results_window.py      │
+│ 5. Investigation report window · renderer/results.*     │
 │    Cause · Exact lines · Explanation · Proposed fix     │
-│    renders result_model view-models; backend reached    │
-│    only through the injected API client (open-file)     │
+│    renders backend status JSON; backend reached only    │
+│    through the preload bridge (open-file)               │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -51,10 +54,10 @@ except the composition roots, which only wire startup (never business logic).
 | L3 standalone | `ollama_client` ← only `config`; no evidence, validator, engine, or UI imports |
 | L4 downstream-only | `validator` ← only `project_inspector` + `schemas`; never calls model/orchestrator |
 | L2 orchestrates, doesn't host | `investigation_engine` never imports `server`; `server` hosts the engine and never touches evidence/model modules directly |
-| Transport is dumb | `api_client` is stdlib-only HTTP (start/stream/cancel/open-file); owns `TERMINAL_STAGES` locally instead of importing character code |
-| L1 sees only motion | `companion` ← only `character`; no network, report, or backend imports |
-| L5 sees only view-models | `results_window` ← only `result_model`; backend reached via injected client |
-| Single bridge | Only composition roots (`trace_ui/app.py` autostart + `main.py` CLI) reference both sides, for startup wiring only |
+| Transport is dumb | `traceApi.ts` is fetch-only HTTP (start/stream/cancel/open-file); renderer files are import-free plain scripts behind the preload bridge |
+| L1 sees only motion | character renderer uses the bridge + its own spring/eye code; no backend URLs, no model access (enforced by `tests/test_frontend_guards.py`) |
+| L5 renders backend JSON | results renderer builds Diagnosis/Locations/Fix/Evidence from status JSON; incomplete states render as honest banners |
+| Single bridge | Only composition roots (`electron/src/main/main.ts` spawn + IPC, `trace_ui/app.py`, `main.py` CLI) reference both sides, for startup wiring only |
 
 ## Privacy note (unchanged)
 
