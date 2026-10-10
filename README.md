@@ -30,6 +30,12 @@ workflows, no reuse of external endpoints. Works when writing code alone.
 Pipeline: `receive → screenshot → context → project_root → error_extract →
 read_files → diagnostics → model_analysis → validate → report`.
 
+**Desktop UI (`trace_ui/`):** the system is kept separated into the five
+components in `docs/ARCHITECTURE.md` — desktop character → orchestrator →
+Ollama `gemma4:31b-cloud` → evidence verification → report window.
+Run it with `python main.py` (`--backend-only` for the server alone).
+Layering is enforced by `tests/test_layering.py`.
+
 ## Setup
 
 Requires Python ≥ 3.10 (repo requests 3.14; tested on 3.14.5).
