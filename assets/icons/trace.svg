@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Trace app icon — source of truth. Matches the companion:
+       black rounded body, white face blob, mouse-following eyes,
+       teal investigation progress line. -->
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="#0b0b0e"/>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="none" stroke="#2e2e36" stroke-width="10"/>
+  <!-- soft halo -->
+  <ellipse cx="256" cy="236" rx="168" ry="128" fill="none" stroke="#26262e" stroke-width="10"/>
+  <!-- face blob -->
+  <rect x="98" y="126" width="316" height="220" rx="110" fill="#f5f5f7"/>
+  <!-- arm dot (companion's side dot) -->
+  <circle cx="88" cy="262" r="16" fill="#f5f5f7"/>
+  <!-- eyes -->
+  <ellipse cx="190" cy="232" rx="28" ry="38" fill="#0b0b0e"/>
+  <ellipse cx="322" cy="232" rx="28" ry="38" fill="#0b0b0e"/>
+  <!-- progress track + teal fill -->
+  <rect x="120" y="384" width="272" height="18" rx="9" fill="#26262e"/>
+  <rect x="120" y="384" width="176" height="18" rx="9" fill="#4fd1c5"/>
+</svg>

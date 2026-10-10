@@ -286,6 +286,44 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
     return Handler
 
 
+def _apply_background_identity() -> None:
+    """Give the background backend process the Trace identity (best-effort).
+
+    Inline + stdlib-only on purpose: server.py must stay a thin host and
+    must never import trace_ui (see tests/test_layering.py). Sets the
+    AppUserModelID (taskbar grouping), the console title, and the console
+    window icon from assets/icons/trace.ico so ``python main.py
+    --backend-only`` also carries the Trace icon.
+    """
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "Trace.Trace.0.1")
+        except Exception:
+            pass
+        try:
+            ctypes.windll.kernel32.SetConsoleTitleW("Trace Backend")
+        except Exception:
+            pass
+        try:
+            ico = Path(__file__).resolve().parent.parent / "assets" / "icons" / "trace.ico"
+            if ico.is_file():
+                hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+                if hwnd:
+                    hicon = ctypes.windll.user32.LoadImageW(
+                        None, str(ico), 1, 0, 0, 0x10 | 0x40)
+                    if hicon:
+                        ctypes.windll.user32.SendMessageW(hwnd, 0x80, 0, hicon)
+                        ctypes.windll.user32.SendMessageW(hwnd, 0x80, 1, hicon)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
 def run_server(config: TraceConfig | None = None, *,
                engine: InvestigationEngine | None = None,
                block: bool = True) -> ThreadingHTTPServer:
@@ -294,6 +332,7 @@ def run_server(config: TraceConfig | None = None, *,
     problems = config.validate()
     if problems:
         raise ValueError("Invalid Trace configuration: " + "; ".join(problems))
+    _apply_background_identity()
     engine = engine or InvestigationEngine(config)
     store = InvestigationStore(engine)
     handler = make_handler(store, config)
