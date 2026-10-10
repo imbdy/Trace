@@ -1,0 +1,374 @@
+"""Investigation engine: the 10-stage pipeline.
+
+Stages: receive → screenshot → context → project_root → error_extract →
+read_files → diagnostics → model_analysis → validate → report.
+
+- Combines screenshot + code + diagnostics; a screenshot alone is never
+  treated as sufficient evidence.
+- Never invents paths/line numbers: all model-proposed locations are
+  verified against disk (validator.sanitize_report).
+- Supports cancellation via threading.Event at every stage + during streaming.
+- Malformed model output degrades to a low-confidence honest report, never
+  a fabricated one.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import threading
+from pathlib import Path
+from typing import Callable
+
+from .config import TraceConfig
+from .context_collector import LocalContext, collect_local_context
+from .ollama_client import OllamaCancelledError, OllamaClient, OllamaError
+from .project_inspector import (
+    ErrorInfo,
+    build_model_context,
+    collect_diagnostics,
+    extract_error_info,
+    find_project_root,
+    follow_imports,
+    list_candidate_files,
+    safe_read,
+)
+from .schemas import (
+    STAGES,
+    Finding,
+    InvestigationReport,
+    InvestigationRequest,
+    ProgressEvent,
+    RecommendedFix,
+    new_investigation_id,
+)
+from .screenshot_service import (
+    ScreenshotCaptureError,
+    ScreenshotResult,
+    capture_screenshot,
+    dispose,
+)
+from .validator import sanitize_report
+
+
+class InvestigationCancelled(Exception):
+    pass
+
+
+ProgressCallback = Callable[[ProgressEvent], None]
+
+
+SYSTEM_PROMPT = """You are Trace, a careful debugging assistant. Analyze the provided evidence \
+(screenshots described as text, code excerpts, error messages, diagnostics) and return ONLY valid JSON \
+with this exact schema:
+{"summary": str, "root_cause": str, "confidence": "low"|"medium"|"high",
+ "confidence_rationale": str, "findings": [{"title": str, "file_path": str, \
+"start_line": int, "end_line": int, "explanation": str, "evidence": str}],
+ "recommended_fix": {"description": str, "diff": str, "rationale": str},
+ "alternative_hypotheses": [str], "needs_more_info": [str], "evidence_summary": str}
+Rules: only cite file paths and line numbers that appear in the provided FILE excerpts or \
+error stack frames. Never invent paths, line numbers, compiler output, or test results. If evidence \
+is insufficient, set confidence to "low", explain what is known vs uncertain, and list the next \
+diagnostic step in needs_more_info."""
+
+
+def _check_cancelled(cancel: threading.Event | None):
+    if cancel is not None and cancel.is_set():
+        raise InvestigationCancelled("Investigation cancelled by user.")
+
+
+class InvestigationEngine:
+    def __init__(self, config: TraceConfig | None = None,
+                 ollama: OllamaClient | None = None):
+        self.config = config or TraceConfig.from_env()
+        self.ollama = ollama or OllamaClient(self.config)
+
+    def investigate(self, request: InvestigationRequest,
+                    progress_cb: ProgressCallback | None = None,
+                    cancel_event: threading.Event | None = None,
+                    investigation_id: str | None = None) -> InvestigationReport:
+        inv_id = investigation_id or new_investigation_id()
+
+        def emit(stage: str, message: str):
+            idx = STAGES.index(stage) if stage in STAGES else 0
+            progress = (idx + 1) / len(STAGES)
+            if progress_cb:
+                try:
+                    progress_cb(ProgressEvent(inv_id, stage, message, progress))
+                except Exception:
+                    pass
+
+        problems = request.validate()
+        if problems:
+            return InvestigationReport(
+                investigation_id=inv_id, summary="Invalid investigation request.",
+                root_cause="; ".join(problems), confidence="low",
+                warnings=["Invalid request: " + "; ".join(problems)])
+
+        # 1. receive
+        _check_cancelled(cancel_event)
+        emit("receive", "Received debugging request.")
+
+        # 2. screenshot
+        _check_cancelled(cancel_event)
+        shot: ScreenshotResult | None = None
+        screenshot_note = "screenshots disabled by request"
+        screenshot_b64: str | None = None
+        if request.include_screenshot:
+            try:
+                emit("screenshot", f"Capturing {request.screenshot_mode} screenshot…")
+                shot = capture_screenshot(mode=request.screenshot_mode,
+                                          max_dim=self.config.max_screenshot_dim)
+                screenshot_b64 = base64.b64encode(shot.png_bytes).decode("ascii")
+                screenshot_note = (f"screenshot captured via {shot.source} "
+                                   f"({shot.width}x{shot.height}, {len(shot.png_bytes)} bytes)")
+            except (ScreenshotCaptureError, ValueError) as e:
+                hint = getattr(e, "hint", "")
+                screenshot_note = f"screenshot unavailable: {e}. {hint}".strip()
+                emit("screenshot", screenshot_note)
+            except Exception as e:  # graceful
+                screenshot_note = f"screenshot failed unexpectedly: {e}"
+        else:
+            emit("screenshot", screenshot_note)
+
+        try:
+            # 3. context
+            _check_cancelled(cancel_event)
+            emit("context", "Collecting local context…")
+            ctx: LocalContext = collect_local_context(
+                editor_selection=request.editor_selection,
+                terminal_output=request.terminal_output,
+                allow_clipboard=request.include_clipboard,
+                project_hint=request.project_dir)
+
+            # 4. project root
+            _check_cancelled(cancel_event)
+            emit("project_root", "Identifying project root…")
+            root = find_project_root(request.project_dir or ctx.cwd)
+            needs_more: list[str] = []
+            if root is None:
+                msg = ("Could not identify the active project. Select the project "
+                       "folder or provide the missing context.")
+                return InvestigationReport(
+                    investigation_id=inv_id,
+                    summary="Project root could not be identified.",
+                    root_cause="Unknown project location; no files inspected.",
+                    confidence="low", confidence_rationale=screenshot_note,
+                    needs_more_info=[msg],
+                    evidence_summary=f"{screenshot_note}\n{ctx.summary()}",
+                    warnings=["No project files were read; refusing to invent an explanation."])
+
+            # 5. error extraction
+            _check_cancelled(cancel_event)
+            emit("error_extract", "Extracting error message and stack trace…")
+            combined_text = "\n\n".join(t for t in [
+                request.request_text, request.terminal_output or "",
+                request.editor_selection or "", request.extra_context or ""] if t)
+            error: ErrorInfo = extract_error_info(combined_text)
+
+            # 6. read files
+            _check_cancelled(cancel_event)
+            emit("read_files", f"Reading relevant files under {root}…")
+            files: list[tuple[Path, str]] = []
+            read_notes: list[str] = []
+            # a) frames from stack trace first (strongest signal)
+            seen: set[Path] = set()
+            for frame in error.frames[:8]:
+                _check_cancelled(cancel_event)
+                content, note = safe_read(root, frame.file,
+                                          max_bytes=self.config.max_file_bytes)
+                if content is not None:
+                    p = (root / frame.file).resolve() if not Path(frame.file).is_absolute() \
+                        else Path(frame.file)
+                    if p not in seen:
+                        files.append((p, content[:12000]))
+                        seen.add(p)
+                    read_notes.append(f"{frame.file}:{frame.line} ({note})")
+                else:
+                    read_notes.append(f"{frame.file} — {note}")
+            # b) ranked candidates from request text
+            for cand in list_candidate_files(root, request.request_text + " " + error.message):
+                _check_cancelled(cancel_event)
+                if cand in seen:
+                    continue
+                try:
+                    rel = cand.relative_to(root)
+                except ValueError:
+                    continue
+                content, note = safe_read(root, rel, max_bytes=self.config.max_file_bytes)
+                if content is not None:
+                    files.append((cand, content[:12000]))
+                    seen.add(cand)
+                    # follow imports for the top hit only (bounded)
+                    if len(files) <= 3:
+                        for rel2 in follow_imports(cand, root):
+                            if rel2 not in seen and len(files) < 12:
+                                c2, _ = safe_read(root, rel2 if rel2.is_absolute()
+                                                  else rel2.relative_to(root)
+                                                  if _in(rel2, root) else rel2,
+                                                  max_bytes=self.config.max_file_bytes)
+                                if c2 is not None:
+                                    files.append((rel2, c2[:12000]))
+                                    seen.add(rel2)
+                if len(files) >= 12:
+                    break
+            if not files:
+                needs_more.append(
+                    "No relevant project files could be identified. Select the project "
+                    "folder, paste the error output, or name the file you suspect.")
+
+            # 7. diagnostics
+            _check_cancelled(cancel_event)
+            emit("diagnostics", "Collecting compiler/linter/test diagnostics…")
+            diagnostics = collect_diagnostics(
+                root, [p for p, _ in files],
+                timeout_s=self.config.diagnostics_timeout_s)
+            _check_cancelled(cancel_event)
+
+            # 8. model analysis
+            emit("model_analysis", f"Asking {self.config.ollama_model} to analyze evidence…")
+            bundle = build_model_context(
+                request_text=request.request_text, error=error, files=files,
+                diagnostics=diagnostics, local_summary=ctx.summary() + "\n" + screenshot_note,
+                budget_chars=self.config.max_context_chars)
+            user_prompt = (bundle + "\n\n---\n\nAnalyze the evidence above and return ONLY the JSON report. "
+                           "Do not invent file paths or line numbers.")
+            messages = [{"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": user_prompt}]
+            if screenshot_b64 and shot is not None:
+                # Ollama vision: attach image to the user message when supported.
+                messages[-1] = {"role": "user", "content": user_prompt,
+                                "images": [screenshot_b64]}
+            try:
+                raw = self.ollama.chat(messages, stream=False,
+                                       cancel_event=cancel_event,
+                                       timeout=self.config.read_timeout_s)
+            except OllamaCancelledError as e:
+                raise InvestigationCancelled(str(e)) from e
+            except OllamaError as e:
+                hint = getattr(e, "hint", "")
+                return InvestigationReport(
+                    investigation_id=inv_id,
+                    summary="Model analysis unavailable.",
+                    root_cause=str(e), confidence="low",
+                    confidence_rationale="No model verdict; evidence collected but not analyzed.",
+                    needs_more_info=[hint] if hint else [],
+                    evidence_summary=(f"{screenshot_note}\n{ctx.summary()}\n"
+                                      f"Files read: {len(files)}. " + "; ".join(read_notes)[:2000]),
+                    warnings=[f"Ollama error: {e}"])
+
+            # 9. validate
+            _check_cancelled(cancel_event)
+            emit("validate", "Validating file paths and line numbers…")
+            report = self._parse_report(inv_id, raw)
+            # Enrich findings with verified excerpts dir context = root.
+            report = sanitize_report(root, report)
+
+            # 10. report
+            emit("report", "Investigation complete.")
+            if not report.evidence_summary:
+                report.evidence_summary = (
+                    f"{screenshot_note}\n{ctx.summary()}\n"
+                    f"Project root: {root}\nFiles read: {len(files)}")
+            if needs_more:
+                report.needs_more_info = [*report.needs_more_info, *needs_more]
+            if len(files) == 0:
+                report.warnings.append(
+                    "Screenshot/visual evidence alone is insufficient; no code excerpts "
+                    "were available for verification.")
+            return report
+        finally:
+            if shot is not None:
+                dispose(shot)
+
+    # -- parsing ------------------------------------------------------------
+    @staticmethod
+    def _parse_report(inv_id: str, raw: str) -> InvestigationReport:
+        text = raw.strip()
+        # Strip code fences.
+        if text.startswith("```"):
+            first_nl = text.find("\n")
+            text = text[first_nl + 1:] if first_nl != -1 else text[3:]
+            if text.rstrip().endswith("```"):
+                text = text.rstrip()[: -3]
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            # Try to salvage the largest {...} block.
+            start, end = text.find("{"), text.rfind("}")
+            if start != -1 and end > start:
+                try:
+                    data = json.loads(text[start:end + 1])
+                except json.JSONDecodeError:
+                    data = None
+            else:
+                data = None
+        if not isinstance(data, dict):
+            return InvestigationReport(
+                investigation_id=inv_id,
+                summary="Model returned unstructured output.",
+                root_cause="Could not parse a structured verdict from the model.",
+                confidence="low",
+                confidence_rationale="Malformed model output; no verified findings.",
+                alternative_hypotheses=[text[:2000] if text else "(empty model output)"],
+                needs_more_info=["Re-run the investigation; consider a smaller evidence bundle."],
+                warnings=["Malformed model output: expected JSON, got free text. "
+                          "Raw output preserved as an alternative hypothesis."])
+        try:
+            findings = []
+            for f in data.get("findings", []) or []:
+                if not isinstance(f, dict):
+                    continue
+                try:
+                    findings.append(Finding(
+                        title=str(f.get("title", "Finding"))[:300],
+                        file_path=str(f.get("file_path", ""))[:500],
+                        start_line=int(f.get("start_line", 0) or 0),
+                        end_line=int(f.get("end_line", 0) or int(f.get("start_line", 0) or 0)),
+                        explanation=str(f.get("explanation", ""))[:4000],
+                        evidence=str(f.get("evidence", ""))[:4000],
+                        confidence=str(f.get("confidence", "low")).lower()
+                        if str(f.get("confidence", "")).lower() in ("low", "medium", "high") else "low",
+                    ))
+                except (ValueError, TypeError):
+                    continue
+            rec = data.get("recommended_fix") or {}
+            recommended = None
+            if isinstance(rec, dict) and (rec.get("description") or rec.get("diff")):
+                recommended = RecommendedFix(
+                    description=str(rec.get("description", ""))[:4000],
+                    diff=str(rec.get("diff"))[:8000] if rec.get("diff") else None,
+                    rationale=str(rec.get("rationale", ""))[:2000])
+            conf = str(data.get("confidence", "low")).lower()
+            if conf not in ("low", "medium", "high"):
+                conf = "low"
+            return InvestigationReport(
+                investigation_id=inv_id,
+                summary=str(data.get("summary", ""))[:4000] or "No summary provided.",
+                root_cause=str(data.get("root_cause", ""))[:4000] or "Unknown.",
+                confidence=conf,
+                confidence_rationale=str(data.get("confidence_rationale", ""))[:2000],
+                findings=findings,
+                recommended_fix=recommended,
+                alternative_hypotheses=[str(h)[:2000] for h in
+                                        (data.get("alternative_hypotheses", []) or [])][:10],
+                needs_more_info=[str(n)[:1000] for n in
+                                 (data.get("needs_more_info", []) or [])][:10],
+                evidence_summary=str(data.get("evidence_summary", ""))[:4000],
+            )
+        except Exception as e:
+            return InvestigationReport(
+                investigation_id=inv_id,
+                summary="Model output could not be interpreted.",
+                root_cause=f"Report shaping failed: {e}",
+                confidence="low",
+                alternative_hypotheses=[text[:2000]],
+                warnings=[f"Report shaping failed: {e}"])
+
+
+def _in(p: Path, root: Path) -> bool:
+    try:
+        p.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
