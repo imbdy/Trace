@@ -12,7 +12,6 @@
   var badgeEl = document.getElementById('badge');
   var leafEl = document.getElementById('leaf');
   var leafBodyEl = document.getElementById('leaf-body');
-  var tabEl = document.getElementById('tab');
   var debug = document.getElementById('debug');
   var fpsEl = document.getElementById('fps');
   var moodEl = document.getElementById('mood');
@@ -54,6 +53,10 @@
     } catch (e) {}
   }
   var fitTimer = null;
+  // Explicit final sizes: the shell widens rightward, height pinned to the
+  // collapsed height so expansion never grows downward.
+  var OPEN_W = 732;   // 660 leaf + 44 sill pads + 28 shadow pad
+  var CLOSED_W = 408; // 336 leaf + 44 sill pads + 28 shadow pad
   function requestFitSettled() {
     clearTimeout(fitTimer);
     fitTimer = setTimeout(requestFit, 380);
@@ -224,9 +227,10 @@
       if (!Sh.open) {
         untuck();
         Sh.open = true;
+        var h0 = 0;
+        try { h0 = Math.ceil(sill.getBoundingClientRect().height + SHADOW_PAD); } catch (e0) {}
         if (leafEl) { leafEl.classList.add('open'); }
         if (leafBodyEl) { leafBodyEl.setAttribute('aria-hidden', 'false'); }
-        if (tabEl) { tabEl.textContent = '⌃'; tabEl.title = 'fold the notes (esc)'; }
         if (H) { try { H.wake(); } catch (e) {} }
         try {
           if (window.trace && window.trace.settings) {
@@ -235,7 +239,9 @@
             }).catch(function () {});
           }
         } catch (e) {}
-        requestFit();
+        try { if (window.trace && window.trace.resize) window.trace.resize(OPEN_W, h0 || 198); } catch (e2) {}
+        var ask = document.getElementById('ask-text');
+        if (ask) { try { ask.focus({ preventScroll: true }); } catch (e3) {} }
         requestFitSettled();
       }
     },
@@ -244,8 +250,10 @@
         Sh.open = false;
         if (leafEl) { leafEl.classList.remove('open'); }
         if (leafBodyEl) { leafBodyEl.setAttribute('aria-hidden', 'true'); }
-        if (tabEl) { tabEl.textContent = '⌄'; tabEl.title = 'Trace’s notes — ask + controls'; }
-        requestFit();
+        try {
+          var r = sill.getBoundingClientRect(); // reflowed: notes hidden again
+          if (window.trace && window.trace.resize) window.trace.resize(CLOSED_W, Math.ceil(r.height + SHADOW_PAD));
+        } catch (e) {}
       }
     },
     _settle: null,
@@ -299,6 +307,7 @@
   wrap.addEventListener('click', function (e) {
     markInput();
     if (e.detail > 1) return; // double-click handled below
+    if (!Sh.open) api.expand(); // pressing him opens the chat beside him
     clickReact();
   });
   wrap.addEventListener('dblclick', function (e) {
@@ -306,16 +315,16 @@
     e.preventDefault();
     try { if (window.trace && window.trace.showResults) window.trace.showResults(); } catch (err) {}
   });
-  // The paper tab is the deliberate handle for the leaf — visible, labelled,
-  // and impossible to trip by petting him.
-  (function () {
-    var tab = document.getElementById('tab');
-    if (tab) tab.addEventListener('click', function (e) {
-      e.stopPropagation();
-      markInput();
-      api.toggle();
-    });
-  })();
+  // The whole collapsed shell opens the chat: face, title, anywhere on the
+  // card. Interactive children (buttons, input) are excluded so typing and
+  // controls never misfire; the guard below makes background clicks inert
+  // once open, so only fold / Esc collapse.
+  if (leafEl) leafEl.addEventListener('click', function (e) {
+    if (Sh.open) return;
+    if (e.target && e.target.closest && e.target.closest('button, textarea, input, a')) return;
+    markInput();
+    api.expand();
+  });
   document.addEventListener('visibilitychange', function () {
     if (!document.hidden) {
       markInput();

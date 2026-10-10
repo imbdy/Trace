@@ -67,6 +67,20 @@ class TestFrontendGuards(unittest.TestCase):
             text = (SRC / name).read_text(encoding="utf-8")
             self.assertIn("window.trace", text, name)
 
+    def test_renderer_scripts_parse(self):
+        """Every renderer script must parse: a syntax error kills the whole
+        IIFE file silently (no shell = no expansion, no stitch, no verdict)."""
+        import shutil
+        import subprocess
+        node = shutil.which("node")
+        self.assertTrue(node, "node required for renderer parse check")
+        for name in ("renderer/neo/hearthling.js", "renderer/neo/leaf.js",
+                     "renderer/neo/shell.js", "renderer/neo/trace.js"):
+            proc = subprocess.run(
+                [node, "--check", str(SRC / name)],
+                capture_output=True, text=True, timeout=60)
+            self.assertEqual(proc.returncode, 0, f"{name}: {proc.stderr[-500:]}")
+
     def test_renderer_scripts_are_import_free(self):
         """Plain <script> JS (no CJS/ESM boilerplate): runs over file://
         with nodeIntegration disabled."""
@@ -84,10 +98,21 @@ class TestFrontendGuards(unittest.TestCase):
 
 
 class TestNeoFidelity(unittest.TestCase):
+    # Documented Trace patches to Neo's face renderer (everything else
+    # must stay byte-identical). The width patch narrows ONLY the body's
+    # horizontal radius: same height, features undistorted, eyes closer.
+    FACE_PATCHES = [
+        ("window.Hearthling = api;", "window.TraceFace = api;"),
+        ("    const rx = R * 1.10, ry = R * 0.92; // compact and wide: he sits, not floats",
+         "    const rx = R * 1.10 * 0.78, ry = R * 0.92; // compact and wide (Trace narrowing): he sits, not floats"),
+    ]
+
     def test_face_is_neos_verbatim(self):
-        """hearthling.js == Neo's face renderer modulo documented renames."""
+        """hearthling.js == Neo's face renderer modulo documented patches."""
         neo = NEO_FACE.read_text(encoding="utf-8")
-        neo = neo.replace("window.Hearthling = api;", "window.TraceFace = api;")
+        for old, new in self.FACE_PATCHES:
+            self.assertIn(old, neo, "Neo source changed upstream?")
+            neo = neo.replace(old, new)
         # header line replaced by transplant note; drop line 1 on both sides
         neo_body = neo.splitlines()[1:]
         trace_body = (SRC / "renderer/neo/hearthling.js").read_text(

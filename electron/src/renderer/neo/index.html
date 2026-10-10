@@ -15,7 +15,7 @@
   <div id="sill">
     <div id="leaf" aria-hidden="false" aria-label="Trace">
       <div id="face-row">
-        <div id="hearth-wrap" title="Trace — click to say hi, double-click opens the results">
+        <div id="hearth-wrap" title="Trace — click to open, double-click opens the results">
           <canvas id="hearth" width="288" height="288"></canvas>
           <div id="badge" hidden></div>
         </div>
@@ -27,14 +27,13 @@
           <div id="leaf-sub">ready to debug</div>
         </div>
         <div id="face-btns">
-          <button id="tab" type="button" title="Trace's notes — ask + controls">⌄</button>
           <button id="leaf-fold" type="button" title="fold the leaf (esc)">fold</button>
         </div>
       </div>
       <div id="murmur" aria-live="polite"></div>
       <div id="leaf-body" aria-hidden="true">
         <div id="ask">
-          <textarea id="ask-text" rows="3" spellcheck="false"
+          <textarea id="ask-text" rows="2" spellcheck="false"
             placeholder="Why is this code broken? Explain this error without changing my code…"></textarea>
           <button id="ask-send" type="button">Investigate</button>
         </div>
@@ -58,7 +57,7 @@
           <button id="ctl-results" type="button">Results</button>
           <button id="ctl-hide" type="button" title="hide Trace entirely — the tray brings him back">Tuck away</button>
         </div>
-        <div id="leaf-foot">tab opens notes | double-click opens results | esc folds</div>
+        <div id="leaf-foot">click him to open | double-click opens results | esc folds</div>
       </div>
     </div>
   </div>

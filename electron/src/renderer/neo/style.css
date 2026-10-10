@@ -53,20 +53,7 @@ html, body {
 #face-side { flex: 1 1 auto; min-width: 0; }
 #face-btns { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
 
-/* ---- the chevron: the deliberate handle for the notes ---- */
-#tab {
-  width: 30px; height: 30px;
-  background: transparent;
-  color: rgba(233, 236, 241, 0.75);
-  border: 1px solid rgba(233, 236, 241, 0.35);
-  border-radius: 8px;
-  font-size: 14px; font-weight: 700; line-height: 1;
-  cursor: pointer;
-  padding: 0 0 2px 0;
-}
-#tab:hover { background: #e9ecf1; color: #101216; border-color: #e9ecf1; }
-#tab:active { transform: scale(0.94); }
-#tab:focus-visible { outline: 2px solid #8faeff; outline-offset: 2px; }
+/* (chevron removed: the whole collapsed shell opens the chat) */
 
 /* Count of unacked brief items, resting on his head like a seed. */
 #badge {
@@ -113,13 +100,18 @@ html, body {
   border-radius: 22px;
   border-top: 3px dashed rgba(233, 236, 241, 0.28); /* the stitched edge he hangs from */
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
-  padding: 12px 14px 10px 14px;
+  padding: 12px 14px 8px 14px;
   box-sizing: border-box;
   cursor: default;
 }
 #leaf-body { display: none; }
-#leaf.open #leaf-body { display: block; animation: leafin 0.28s cubic-bezier(0.2, 1.2, 0.4, 1); }
-@keyframes leafin { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+/* ---- horizontal expansion: face stays left, chat slides in beside it ----
+   The leaf keeps its collapsed height; only the width grows, rightward. */
+#leaf { transition: width 0.22s cubic-bezier(0.2, 0.9, 0.3, 1); }
+#leaf.open { display: flex; flex-direction: row; gap: 12px; width: 660px; }
+#leaf.open #face-row { flex: 0 0 auto; }
+#leaf.open #leaf-body { display: block; flex: 1 1 auto; min-width: 0; animation: slidein 0.25s ease; }
+@keyframes slidein { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
 #leaf:not(.open) #leaf-fold { display: none; } /* nothing to fold when shut */
 
 #leaf-head { display: flex; align-items: center; gap: 8px; }
@@ -192,7 +184,7 @@ html, body {
 #approval-open:hover { background: #9db9ff; }
 
 /* ---- controls ---- */
-#controls { display: flex; gap: 6px; margin-top: 10px; }
+#controls { display: flex; gap: 6px; margin-top: 6px; }
 #controls button {
   flex: 1 1 auto;
   border: 1px solid rgba(233, 236, 241, 0.35); background: transparent; color: rgba(233, 236, 241, 0.75);
@@ -208,7 +200,7 @@ html, body {
 #brief-list button:active { transform: scale(0.94); }
 #brief-list button:focus-visible { outline: 2px solid #8faeff; outline-offset: 2px; }
 #approval-open:active { transform: scale(0.97); }
-#leaf-foot { font-size: 10px; color: rgba(233, 236, 241, 0.38); margin-top: 8px; font-family: Consolas, monospace; }
+#leaf-foot { font-size: 10px; color: rgba(233, 236, 241, 0.38); margin-top: 4px; font-family: Consolas, monospace; }
 
 /* ---- verdict (investigation outcome; same role the approval block had) ---- */
 #verdict[hidden] { display: none; }
@@ -224,7 +216,7 @@ html, body {
 #verdict-open:focus-visible { outline: 2px solid #8faeff; outline-offset: 2px; }
 
 /* ---- composer: plain-language debugging requests ---- */
-#ask { display: flex; gap: 6px; margin-top: 10px; align-items: stretch; }
+#ask { display: flex; gap: 6px; margin-top: 4px; align-items: stretch; }
 #ask-text {
   flex: 1 1 auto; min-width: 0; resize: none;
   background: #14171c; color: #e9ecf1;
