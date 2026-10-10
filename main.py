@@ -1,16 +1,16 @@
-# This is a sample Python script.
+"""Trace launcher: start the independent debugging backend (loopback only)."""
 
-# Press Shift+F10 to execute it or replace it with your code.
-# Press Double Shift to search everywhere for classes, files, tool windows, actions, and settings.
-
-
-def print_hi(name):
-    # Use a breakpoint in the code line below to debug your script.
-    print(f'Hi, {name}')  # Press Ctrl+F8 to toggle the breakpoint.
+from trace_backend.config import TraceConfig
+from trace_backend.server import run_server
 
 
-# Press the green button in the gutter to run the script.
-if __name__ == '__main__':
-    print_hi('PyCharm')
+def main() -> None:
+    config = TraceConfig.from_env()
+    problems = config.validate()
+    if problems:
+        raise SystemExit("Invalid Trace configuration: " + "; ".join(problems))
+    run_server(config)
 
-# See PyCharm help at https://www.jetbrains.com/help/pycharm/
+
+if __name__ == "__main__":
+    main()
