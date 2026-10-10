@@ -1,0 +1,256 @@
+/* Neo — one wide black character-box hanging off the top edge.
+ *
+ * A single horizontal rounded black box holds his face AND his controls:
+ * face row on top (always visible), notes below (unfolded on demand).
+ * Flat black surfaces, light ink, subtle shading only. No glass, no blur,
+ * no glow rings, no decorative dots. State reads from his face + one small
+ * glow dot, never from chrome. */
+
+html, body {
+  margin: 0; padding: 0;
+  background: transparent;
+  overflow: hidden;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: default;
+}
+
+#stage {
+  width: 100vw; height: 100vh;
+  position: relative;
+  background: transparent;
+}
+
+/* The box hangs off the top screen edge (main positions the window with a
+   slight overhang): face row first, notes unfolding below it. The window
+   hugs the box; transparent dead space is minimal so the wallpaper behind
+   can never join the composition. */
+#sill {
+  position: absolute;
+  left: 14px; top: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: 12px 22px 16px 22px; /* top pad: face clears the screen edge */
+}
+
+/* ---- his face, living inside the box ---- */
+#face-row {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+#hearth-wrap {
+  position: relative;
+  width: 96px; height: 96px;
+  flex: 0 0 auto;
+  cursor: pointer;
+}
+#hearth { width: 96px; height: 96px; display: block; background: transparent; }
+#face-side { flex: 1 1 auto; min-width: 0; }
+#face-btns { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
+
+/* ---- the chevron: the deliberate handle for the notes ---- */
+#tab {
+  width: 30px; height: 30px;
+  background: transparent;
+  color: rgba(233, 236, 241, 0.75);
+  border: 1px solid rgba(233, 236, 241, 0.35);
+  border-radius: 8px;
+  font-size: 14px; font-weight: 700; line-height: 1;
+  cursor: pointer;
+  padding: 0 0 2px 0;
+}
+#tab:hover { background: #e9ecf1; color: #101216; border-color: #e9ecf1; }
+#tab:active { transform: scale(0.94); }
+#tab:focus-visible { outline: 2px solid #8faeff; outline-offset: 2px; }
+
+/* Count of unacked brief items, resting on his head like a seed. */
+#badge {
+  position: absolute;
+  top: 4px; right: 8px;
+  min-width: 20px; height: 20px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  background: #17181c;
+  color: #f2e9d4;
+  border: 2px solid #17181c;
+  border-radius: 999px;
+  font-size: 12px; font-weight: 700; line-height: 16px; text-align: center;
+}
+#badge[hidden] { display: none; }
+
+/* ---- murmur: one short line over his face row, never reflowing ---- */
+#murmur {
+  position: absolute;
+  left: 24px; top: 84px;
+  max-width: 180px;
+  padding: 3px 10px;
+  background: #14171c;
+  color: #e8e2d2;
+  border-radius: 999px;
+  font-size: 12px; line-height: 1.35;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+  z-index: 3;
+}
+#murmur.show { opacity: 1; }
+
+/* ---- the box: wide black bar holding his face and his notes ---- */
+#leaf {
+  display: block; /* always present: face lives here, notes unfold below */
+  width: 336px;
+  max-height: 300px;
+  overflow-y: auto;
+  position: relative;
+  background: #101216;
+  color: #e9ecf1;
+  border-radius: 22px;
+  border-top: 3px dashed rgba(233, 236, 241, 0.28); /* the stitched edge he hangs from */
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  padding: 12px 14px 10px 14px;
+  box-sizing: border-box;
+  cursor: default;
+}
+#leaf-body { display: none; }
+#leaf.open #leaf-body { display: block; animation: leafin 0.28s cubic-bezier(0.2, 1.2, 0.4, 1); }
+@keyframes leafin { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+#leaf:not(.open) #leaf-fold { display: none; } /* nothing to fold when shut */
+
+#leaf-head { display: flex; align-items: center; gap: 8px; }
+#leaf-glow {
+  width: 9px; height: 9px; border-radius: 50%;
+  background: #c9a15a;
+  flex: 0 0 auto;
+}
+#leaf-glow.working { background: #7d9bd6; }
+#leaf-glow.attention { background: #5b8def; animation: breathe 1.9s ease-in-out infinite; }
+#leaf-glow.done { background: #4da26b; }
+#leaf-glow.error { background: #c25a5a; }
+#leaf-glow.sleeping { background: #8a8474; }
+@keyframes breathe { 50% { opacity: 0.45; } }
+#leaf-title { font-size: 13px; font-weight: 700; letter-spacing: 0.01em; flex: 1 1 auto; }
+#leaf-fold {
+  border: 1px solid rgba(233, 236, 241, 0.35); background: transparent; color: rgba(233, 236, 241, 0.7);
+  border-radius: 6px; font-size: 11px; padding: 1px 8px; cursor: pointer;
+}
+#leaf-fold:hover { background: #e9ecf1; color: #101216; border-color: #e9ecf1; }
+#leaf-sub { font-size: 12px; color: rgba(233, 236, 241, 0.6); margin-top: 2px; }
+
+/* ---- return brief ---- */
+#brief[hidden] { display: none; }
+#brief-head { font-size: 12px; font-weight: 700; margin: 10px 0 4px; color: #e9ecf1; }
+#brief-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+#brief-list li {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 12px; line-height: 1.4;
+  border-top: 1px solid rgba(233, 236, 241, 0.12);
+  padding-top: 6px;
+}
+#brief-list .k {
+  flex: 0 0 auto;
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+  width: 64px;
+}
+#brief-list .k.approval { color: #9db9ff; }
+#brief-list .k.error { color: #ff8a8a; }
+#brief-list .k.done { color: #6fce95; }
+#brief-list .t { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#brief-list button {
+  flex: 0 0 auto;
+  border: 1px solid rgba(233, 236, 241, 0.4); background: transparent; color: #e9ecf1;
+  border-radius: 6px; font-size: 11px; padding: 1px 8px; cursor: pointer;
+}
+#brief-list button:hover { background: #e9ecf1; color: #101216; }
+
+/* ---- live activity ---- */
+#live[hidden] { display: none; }
+#live-title-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-top: 10px; }
+#live-title { font-size: 12px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#live-phase { font-size: 11px; color: rgba(233, 236, 241, 0.6); font-family: Consolas, monospace; }
+#stitch { display: flex; gap: 6px; align-items: baseline; margin-top: 4px; font-family: Consolas, monospace; font-size: 11px; }
+#stitch .st { color: rgba(233, 236, 241, 0.45); }
+#stitch i { color: rgba(233, 236, 241, 0.35); font-style: normal; }
+#stitch .st.seen { color: #ffffff; font-weight: 700; }
+#stitch .st.now { color: #8faeff; font-weight: 700; text-decoration: underline; }
+#stitch .st.tick { color: #6fce95; }
+#live-log { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
+#live-log .ll { font-size: 11px; color: rgba(233, 236, 241, 0.62); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#approval[hidden] { display: none; }
+#approval { margin-top: 8px; border-top: 2px solid rgba(233, 236, 241, 0.4); padding-top: 8px; }
+#approval-line { font-size: 12px; line-height: 1.4; }
+#approval-open {
+  margin-top: 6px; font-size: 12px; font-weight: 700;
+  color: #101216; background: #e9ecf1;
+  border: none; border-radius: 7px; padding: 5px 12px; cursor: pointer;
+}
+#approval-open:hover { background: #9db9ff; }
+
+/* ---- controls ---- */
+#controls { display: flex; gap: 6px; margin-top: 10px; }
+#controls button {
+  flex: 1 1 auto;
+  border: 1px solid rgba(233, 236, 241, 0.35); background: transparent; color: rgba(233, 236, 241, 0.75);
+  border-radius: 7px; font-size: 11px; padding: 4px 0; cursor: pointer;
+}
+#controls button:hover { background: #e9ecf1; color: #101216; border-color: #e9ecf1; }
+#controls button:active { transform: scale(0.96); }
+#controls button:focus-visible { outline: 2px solid #8faeff; outline-offset: 2px; }
+#controls button:disabled { opacity: 0.45; cursor: default; }
+#controls button:disabled:hover { background: transparent; color: rgba(233, 236, 241, 0.75); border-color: rgba(233, 236, 241, 0.35); }
+#leaf-fold:active { transform: scale(0.94); }
+#leaf-fold:focus-visible { outline: 2px solid #8faeff; outline-offset: 2px; }
+#brief-list button:active { transform: scale(0.94); }
+#brief-list button:focus-visible { outline: 2px solid #8faeff; outline-offset: 2px; }
+#approval-open:active { transform: scale(0.97); }
+#leaf-foot { font-size: 10px; color: rgba(233, 236, 241, 0.38); margin-top: 8px; font-family: Consolas, monospace; }
+
+/* ---- verdict (investigation outcome; same role the approval block had) ---- */
+#verdict[hidden] { display: none; }
+#verdict { margin-top: 8px; border-top: 2px solid rgba(233, 236, 241, 0.4); padding-top: 8px; }
+#verdict-line { font-size: 12px; line-height: 1.4; }
+#verdict-open {
+  margin-top: 6px; font-size: 12px; font-weight: 700;
+  color: #101216; background: #e9ecf1;
+  border: none; border-radius: 7px; padding: 5px 12px; cursor: pointer;
+}
+#verdict-open:hover { background: #9db9ff; }
+#verdict-open:active { transform: scale(0.97); }
+#verdict-open:focus-visible { outline: 2px solid #8faeff; outline-offset: 2px; }
+
+/* ---- composer: plain-language debugging requests ---- */
+#ask { display: flex; gap: 6px; margin-top: 10px; align-items: stretch; }
+#ask-text {
+  flex: 1 1 auto; min-width: 0; resize: none;
+  background: #14171c; color: #e9ecf1;
+  border: 1px solid rgba(233, 236, 241, 0.25); border-radius: 8px;
+  font-size: 12px; line-height: 1.45; padding: 6px 8px;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  user-select: text;
+}
+#ask-text::placeholder { color: rgba(233, 236, 241, 0.38); }
+#ask-text:focus { outline: 2px solid #8faeff; outline-offset: 1px; border-color: transparent; }
+#ask-send {
+  flex: 0 0 auto;
+  border: none; background: #e9ecf1; color: #101216;
+  border-radius: 8px; font-size: 12px; font-weight: 700; padding: 0 14px; cursor: pointer;
+}
+#ask-send:hover { background: #9db9ff; }
+#ask-send:active { transform: scale(0.96); }
+#ask-send:disabled { opacity: 0.45; cursor: default; }
+#ask-send:focus-visible { outline: 2px solid #8faeff; outline-offset: 2px; }
+
+#debug { position: absolute; top: 8px; left: 8px; display: flex; gap: 6px; }
+#debug[hidden] { display: none; }
+#debug span { background: #14171c; color: #e8e2d2; font-size: 11px; font-family: Consolas, monospace; padding: 2px 8px; border-radius: 8px; }
+
+@media (prefers-reduced-motion: reduce) {
+  #murmur { transition: none; }
+  #leaf-glow.attention { animation: none; }
+  #leaf.open #leaf-body { animation: none; }
+}

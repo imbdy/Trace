@@ -1,20 +1,23 @@
-/* Trace results window: dark, readable, generous spacing. */
+/* Trace results window: Neo's leaf aesthetic — flat black surfaces, light
+   ink, Consolas accents. Same sections as before (Diagnosis / Exact source
+   locations / Proposed solution / Investigation evidence); only the skin
+   changed to match the creature. */
 :root {
-  --bg: #101014; --panel: #17171d; --fg: #ececf1; --muted: #9a9aa3;
-  --accent: #4fd1c5; --green: #43d17c; --amber: #e8a13c; --red: #e5484d;
-  --code: #0b0b0f; --line: #2a2a33;
+  --bg: #101216; --panel: #17181c; --fg: #e9ecf1; --muted: rgba(233, 236, 241, 0.6);
+  --faint: rgba(233, 236, 241, 0.38); --accent: #9db9ff; --green: #6fce95;
+  --amber: #e0c05b; --red: #ff8a8a; --code: #0b0b0f; --line: rgba(233, 236, 241, 0.12);
 }
 html, body {
   margin: 0; padding: 0; background: var(--bg); color: var(--fg);
   font-family: "Segoe UI", system-ui, sans-serif; font-size: 14px; line-height: 1.55;
 }
 #root { max-width: 860px; margin: 0 auto; padding: 8px 20px 48px; }
-h1 { color: var(--accent); font-size: 19px; margin: 26px 0 8px; }
+h1 { color: var(--fg); font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; margin: 26px 0 8px; }
 h2 { font-size: 15px; margin: 18px 0 6px; }
 p, li { overflow-wrap: anywhere; }
 .muted { color: var(--muted); }
 .pad { padding: 24px 4px; }
-.badge { font-weight: 700; font-size: 13px; margin: 0 0 10px; }
+.badge { font-weight: 700; font-size: 13px; margin: 0 0 10px; font-family: Consolas, monospace; }
 .badge.high { color: var(--green); } .badge.medium { color: var(--amber); }
 .badge.low { color: var(--muted); }
 .banner {
@@ -32,12 +35,12 @@ p, li { overflow-wrap: anywhere; }
 .verified { color: var(--green); font-size: 12px; font-weight: 700; white-space: nowrap; }
 .unverified { color: var(--amber); font-size: 12px; font-weight: 700; white-space: nowrap; }
 .loc { margin: 6px 0; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-.link { color: var(--accent); text-decoration: underline; cursor: pointer; font-size: 13px; }
+.link { color: var(--accent); text-decoration: underline; cursor: pointer; font-size: 13px; font-family: Consolas, monospace; }
 .open-btn {
-  background: #26262e; color: var(--fg); border: none; border-radius: 8px;
-  padding: 5px 12px; font-size: 12px; cursor: pointer;
+  background: transparent; color: var(--fg); border: 1px solid rgba(233, 236, 241, 0.4);
+  border-radius: 6px; padding: 4px 12px; font-size: 12px; cursor: pointer;
 }
-.open-btn:hover { background: #34343e; }
+.open-btn:hover { background: #e9ecf1; color: #101216; }
 .note { font-size: 12px; font-style: italic; margin: 4px 0; }
 .note.ok { color: var(--green); } .note.warn { color: var(--amber); }
 .evlabel { color: var(--muted); font-size: 12px; font-weight: 700; margin: 8px 0 2px; }

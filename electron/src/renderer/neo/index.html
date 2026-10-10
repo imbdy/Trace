@@ -1,0 +1,72 @@
+<!doctype html>
+<!-- Trace character window: Neo's leaf design, transplanted and rebranded.
+     Same 336px black box hanging off the top edge: face row on top (always
+     visible), investigation notes unfolding below on demand. -->
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src http://127.0.0.1:* ws://127.0.0.1:*; font-src 'self'">
+<title>Trace</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="stage">
+  <div id="sill">
+    <div id="leaf" aria-hidden="false" aria-label="Trace">
+      <div id="face-row">
+        <div id="hearth-wrap" title="Trace — click to say hi, double-click opens the results">
+          <canvas id="hearth" width="288" height="288"></canvas>
+          <div id="badge" hidden></div>
+        </div>
+        <div id="face-side">
+          <div id="leaf-head">
+            <span id="leaf-glow"></span>
+            <span id="leaf-title">Trace</span>
+          </div>
+          <div id="leaf-sub">ready to debug</div>
+        </div>
+        <div id="face-btns">
+          <button id="tab" type="button" title="Trace's notes — ask + controls">⌄</button>
+          <button id="leaf-fold" type="button" title="fold the leaf (esc)">fold</button>
+        </div>
+      </div>
+      <div id="murmur" aria-live="polite"></div>
+      <div id="leaf-body" aria-hidden="true">
+        <div id="ask">
+          <textarea id="ask-text" rows="3" spellcheck="false"
+            placeholder="Why is this code broken? Explain this error without changing my code…"></textarea>
+          <button id="ask-send" type="button">Investigate</button>
+        </div>
+        <div id="live" hidden>
+          <div id="live-title-row"><span id="live-title">Investigation</span><span id="live-phase">—</span></div>
+          <div id="stitch">
+            <span class="st" data-s="capture">capture</span><i>→</i>
+            <span class="st" data-s="inspect">inspect</span><i>→</i>
+            <span class="st" data-s="analyze">analyze</span><i>→</i>
+            <span class="st" data-s="verify">verify</span><i>→</i>
+            <span class="st" data-s="report">report</span>
+          </div>
+          <div id="live-log"></div>
+          <div id="verdict" hidden>
+            <div id="verdict-line"></div>
+            <button id="verdict-open" type="button">Open results</button>
+          </div>
+        </div>
+        <div id="controls">
+          <button id="ctl-cancel" type="button" disabled>Cancel</button>
+          <button id="ctl-results" type="button">Results</button>
+          <button id="ctl-hide" type="button" title="hide Trace entirely — the tray brings him back">Tuck away</button>
+        </div>
+        <div id="leaf-foot">tab opens notes | double-click opens results | esc folds</div>
+      </div>
+    </div>
+  </div>
+  <div id="debug" hidden><span id="fps">-- fps</span><span id="mood">idle</span><span id="state">idle</span></div>
+</div>
+<script src="hearthling.js"></script>
+<script src="leaf.js"></script>
+<script src="shell.js"></script>
+<script src="trace.js"></script>
+</body>
+</html>
