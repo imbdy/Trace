@@ -39,7 +39,7 @@ import { InvestigationStatus, KNOWN_STAGES, ProgressEvent } from "../shared/prot
 // overlaps the top edge (see placement OVERHANG) so it hangs off it.
 const INITIAL_W = 360 + 28;
 const INITIAL_H = 170 + 28;
-const MIN_W = 200, MAX_W = 440, MIN_H = 160, MAX_H = 520;
+const MIN_W = 200, MAX_W = 760, MIN_H = 160, MAX_H = 520;
 
 const argv = process.argv.slice(1);
 const SMOKE = argv.includes("--smoke");
@@ -52,6 +52,17 @@ const backendPort = (() => {
   const v = i >= 0 ? Number(argv[i + 1]) : NaN;
   return Number.isFinite(v) ? v : 3777;
 })();
+const userDataDir = (() => {
+  const i = argv.indexOf("--user-data-dir");
+  return i >= 0 && argv[i + 1] ? argv[i + 1] : undefined;
+})();
+if (userDataDir) {
+  try {
+    app.setPath("userData", userDataDir);
+  } catch {
+    /* ignore */
+  }
+}
 
 const backend = new BackendManager(backendPort);
 const api = new TraceApi(backend.baseUrl);
@@ -394,10 +405,19 @@ function setupIpc(): void {
     hh = Math.max(MIN_H, Math.min(MAX_H, hh));
     try {
       const [cw, ch] = charWin.getSize();
+      if (SMOKE) console.error(`[smoke] resize asked ${ww}x${hh} (have ${cw}x${ch})`);
       if (cw === ww && ch === hh) return;
-      charWin.setSize(ww, hh);
-      const at = perchPos(ww, hh);
-      charWin.setPosition(at.x, at.y);
+      if (ww < cw) {
+        // Shrink via ONE atomic setBounds: a back-to-back setSize +
+        // setPosition silently drops the size on some Windows drivers.
+        const at = perchPos(ww, hh);
+        charWin.setBounds({ x: at.x, y: at.y, width: ww, height: hh });
+      } else {
+        // Grow (or same width): keep the current top-left so the shell
+        // widens rightward with a stable left edge and vertical alignment.
+        const [cx, cy] = charWin.getPosition();
+        charWin.setBounds({ x: cx, y: cy, width: ww, height: hh });
+      }
     } catch {
       /* ignore */
     }
@@ -488,7 +508,7 @@ async function runSmoke(projectDir: string): Promise<number> {
 
   const dom = await charWin.webContents.executeJavaScript(`(() => ({
     hearth: !!document.querySelector('canvas#hearth'),
-    tab: !!document.querySelector('#tab'),
+    chevronGone: !document.querySelector('#tab'),
     composer: !!document.querySelector('#ask-text'),
     steps: Array.from(document.querySelectorAll('#stitch .st')).map((s) => s.getAttribute('data-s')),
     dots: !!document.querySelector('.three-dots,.typing-indicator'),
@@ -497,7 +517,7 @@ async function runSmoke(projectDir: string): Promise<number> {
     neoma: (document.body.innerText || '').toLowerCase().includes('neoma'),
   }))()`);
   A(dom.hearth, "Neo face canvas present");
-  A(dom.tab, "paper tab present");
+  A(dom.chevronGone, "chevron button removed");
   A(dom.composer, "composer present");
   A(JSON.stringify(dom.steps) === JSON.stringify(["capture", "inspect", "analyze", "verify", "report"]),
     "stitch tracks investigation stages", JSON.stringify(dom.steps));
@@ -505,6 +525,28 @@ async function runSmoke(projectDir: string): Promise<number> {
   A(dom.bridge, "preload bridge exposed, renderer isolated");
   A(dom.title === "Trace", "rebranded to Trace", String(dom.title));
   A(!dom.neoma, "no Neoma references in visible UI");
+
+  // Horizontal expansion: click anywhere on the collapsed shell.
+  const hb0 = charWin.getBounds();
+  await charWin.webContents.executeJavaScript(`document.querySelector('#leaf').click()`);
+  await new Promise((r) => setTimeout(r, 700));
+  const hb1 = charWin.getBounds();
+  const openState = await charWin.webContents.executeJavaScript(`(() => ({
+    open: document.querySelector('#leaf').classList.contains('open'),
+    focused: document.activeElement ? document.activeElement.id : '',
+  }))()`);
+  A(openState.open === true, "shell click expands the chat");
+  A(hb1.width === 732 && hb1.x === hb0.x, "expansion grows rightward, left stable", JSON.stringify(hb1));
+  A(Math.abs(hb1.height - hb0.height) <= 6, "expansion keeps height", `${hb0.height} -> ${hb1.height}`);
+  A(openState.focused === "ask-text", "composer focused, ready to type");
+  await charWin.webContents.executeJavaScript(`document.querySelector('#leaf-fold').click()`);
+  await new Promise((r) => setTimeout(r, 600));
+  const foldState = await charWin.webContents.executeJavaScript(`(() => ({
+    open: document.querySelector('#leaf').classList.contains('open'),
+  }))()`);
+  const hb2 = charWin.getBounds();
+  A(foldState.open === false, "fold handler ran (leaf class removed)", JSON.stringify(foldState));
+  A(hb2.width === 408, "fold collapses back", JSON.stringify(hb2));
 
   const emptyRes = await charWin.webContents.executeJavaScript(
     `window.trace.submit('   ').then((r) => JSON.stringify(r))`);
@@ -575,17 +617,17 @@ async function runSmoke(projectDir: string): Promise<number> {
     const snap = await charWin.webContents.executeJavaScript(`(() => ({
       face: window.TraceFace ? window.TraceFace.state : 'missing',
       reportTick: !!document.querySelector('#stitch [data-s="report"].tick'),
-      verdict: !document.querySelector('#verdict')?.hidden,
+      verdict: (document.querySelector('#verdict-line')?.textContent || '').length,
     }))()`);
     face = snap.face; stitch = String(snap.reportTick); verdict = String(snap.verdict);
-    if (face === "success" && snap.reportTick && snap.verdict) break;
+    if ((face === "success" || face === "idle") && snap.reportTick && snap.verdict > 10) break;
     await new Promise((r) => setTimeout(r, 250));
   }
   // NOTE: main auto-opened results on done; face may have settled back to idle
   // after its 6s performance — accept either, but the stitch + verdict persist.
   A(face === "success" || face === "idle", "creature shows success then settles", `face=${face}`);
   A(stitch === "true", "stitch lit report from real stages");
-  A(verdict === "true", "verdict block shown with real summary");
+  A(Number(verdict) > 10, "verdict block holds the real summary");
 
   if (!resultsWin || resultsWin.isDestroyed()) resultsWin = createResults();
   showResults(status);

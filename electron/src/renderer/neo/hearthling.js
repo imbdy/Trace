@@ -245,7 +245,7 @@
 
   function draw(ctx, W, H) {
     const R = W * 0.30;
-    const rx = R * 1.10, ry = R * 0.92; // compact and wide: he sits, not floats
+    const rx = R * 1.10 * 0.78, ry = R * 0.92; // compact and wide (Trace narrowing): he sits, not floats
     const cx = W / 2 + C.ox * R;
     // Tucked = sunk into the box: only the eyes peek at the canvas bottom.
     const cy = H / 2 + 6 + C.oy * R + C.peek * 44;
