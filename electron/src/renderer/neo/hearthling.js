@@ -50,6 +50,34 @@
 
   const STATES = ['idle', 'working', 'thinking', 'listening', 'success', 'error', 'sleeping'];
 
+  // Facial language is separate from motion state: "reading" can keep the
+  // working body motion while changing only the eyes, brows, and mouth.
+  // Every entry is deliberately small enough to read at Trace's 48px face.
+  const EXPRESSIONS = {
+    idle: { base: 'idle', eye: 'pill', brow: 'neutral', mouth: 'neutral', gaze: [0, 0] },
+    working: { base: 'working', eye: 'pill', brow: 'soft', mouth: 'flat', gaze: [0, 0] },
+    listening: { base: 'listening', eye: 'wide', brow: 'soft', mouth: 'small', gaze: [0, 0] },
+    curious: { base: 'idle', eye: 'wide', brow: 'raised', mouth: 'small', gaze: [0.16, 0.08] },
+    happy: { base: 'idle', eye: 'happy', brow: 'soft', mouth: 'smile', blush: 0.18, gaze: [0, 0] },
+    excited: { base: 'success', eye: 'wide', brow: 'raised', mouth: 'smile', blush: 0.3, gaze: [0, 0.08] },
+    skeptical: { base: 'idle', eye: 'flat', brow: 'skeptic', mouth: 'flat', gaze: [-0.12, 0] },
+    confused: { base: 'idle', eye: 'pill', brow: 'uneven', mouth: 'uncertain', gaze: [0.12, -0.03] },
+    focused: { base: 'working', eye: 'line', brow: 'focused', mouth: 'flat', gaze: [0, 0.06] },
+    sleepy: { base: 'sleeping', eye: 'closed', brow: 'soft', mouth: 'small', gaze: [0, -0.12] },
+    thinking: { base: 'thinking', eye: 'pill', brow: 'raised', mouth: 'small', gaze: [0.48, 0.38] },
+    investigating: { base: 'working', eye: 'line', brow: 'focused', mouth: 'flat', gaze: [0, 0.04] },
+    reading: { base: 'working', eye: 'pill', brow: 'soft', mouth: 'flat', gaze: [-0.2, 0.06] },
+    writing: { base: 'working', eye: 'pill', brow: 'focused', mouth: 'determined', gaze: [0, 0.08] },
+    waiting: { base: 'listening', eye: 'wide', brow: 'soft', mouth: 'small', gaze: [0, 0] },
+    verifying: { base: 'working', eye: 'line', brow: 'focused', mouth: 'small', gaze: [0, 0.08] },
+    success: { base: 'success', eye: 'happy', brow: 'soft', mouth: 'smile', blush: 0.22, gaze: [0, 0] },
+    warning: { base: 'listening', eye: 'wide', brow: 'concerned', mouth: 'concerned', gaze: [0, 0.02] },
+    error: { base: 'error', eye: 'flat', brow: 'concerned', mouth: 'frown', gaze: [0, -0.02] },
+    backend_unavailable: { base: 'error', eye: 'flat', brow: 'skeptic', mouth: 'flat', gaze: [-0.14, 0] },
+    cancelled: { base: 'idle', eye: 'closed', brow: 'soft', mouth: 'flat', gaze: [0, 0] },
+  };
+  const EXPRESSION_NAMES = Object.keys(EXPRESSIONS);
+
   // Per-state look bias on the gaze sphere [yaw, pitch]: thinking looks away,
   // sleeping drops, approval holds yours.
   const LOOK = {
@@ -68,7 +96,7 @@
   };
 
   const C = {
-    state: 'idle',
+    state: 'idle', expression: 'idle',
     t: 0,
     // tweened props (keyframed, eased)
     yaw: 0, pitch: 0, tilt: 0, open: 1, sx: 1, sy: 1, ox: 0, oy: 0,
@@ -125,28 +153,39 @@
   }
 
   function setState(next) {
-    if (STATES.indexOf(next) < 0) return false;
-    if (C.state === next) return true;
-    C.state = next;
-    C.colT = TINT[next];
-    if (!C.locks.has('tint')) C.tint = TINT_K[next];
-    setBadge(BADGE[next]);
+    const requested = EXPRESSIONS[next] ? next : null;
+    const base = requested ? EXPRESSIONS[next].base : next;
+    if (STATES.indexOf(base) < 0) return false;
+    if (C.state === base && (!requested || C.expression === requested)) return true;
+    C.state = base;
+    setExpression(requested || base);
+    C.colT = TINT[base];
+    if (!C.locks.has('tint')) C.tint = TINT_K[base];
+    setBadge(BADGE[base]);
     if (!C.reduced) {
-      if (next === 'success') {
+      if (base === 'success') {
         // happy little jump: up, land-squash, settle + a few sparks
         anim('oy', [[-0.3, 120, Ease.out], [0.03, 200, Ease.inOut], [0, 160, Ease.back]]);
         anim('sy', [[0.82, 80, Ease.out], [1.18, 130, Ease.out], [0.88, 160, Ease.inOut], [1, 200, Ease.back]]);
         anim('sx', [[1.15, 80, Ease.out], [0.88, 130, Ease.out], [1.06, 160, Ease.inOut], [1, 200, Ease.back]]);
         emitSparks(5);
-      } else if (next === 'error') {
+      } else if (base === 'error') {
         // restrained shake: no, this one is wrong
         anim('ox', [[0.08, 50, Ease.out], [-0.08, 70, Ease.inOut], [0.05, 70, Ease.inOut], [0, 90, Ease.out]]);
-      } else if (next === 'listening') {
+      } else if (base === 'listening') {
         // approval: pop up + settle with a soft overshoot, then a gentle bob
         anim('oy', [[-0.2, 150, Ease.out], [0, 300, Ease.back]]);
       }
     }
-    if (next !== 'sleeping') blinkSoon();
+    if (base !== 'sleeping') blinkSoon();
+    return true;
+  }
+
+  function setExpression(next) {
+    const name = EXPRESSIONS[next] ? next : 'idle';
+    C.expression = name;
+    C.blush = EXPRESSIONS[name].blush || 0;
+    if (name !== 'sleepy' && name !== 'sleeping') blinkSoon();
     return true;
   }
 
@@ -319,7 +358,9 @@
 
   function drawFace(ctx, R, rx, ry) {
     // Eyes are drawn CLIPPED to the body: they can never float outside him.
-    let shape = C.eyeOverride || { idle: 'pill', working: 'pill', thinking: 'pill', listening: 'wide', success: 'happy', error: 'flat', sleeping: 'closed' }[C.state];
+    const face = EXPRESSIONS[C.expression] || EXPRESSIONS.idle;
+    let shape = C.eyeOverride || face.eye;
+    drawBrows(ctx, R, rx, ry, face.brow);
     ctx.save();
     ctx.fillStyle = INK;
     ctx.strokeStyle = INK;
@@ -339,6 +380,56 @@
       ctx.scale(fx, fy);
       drawEyeShape(ctx, shape, ew, eh);
       ctx.restore();
+    }
+    ctx.restore();
+    drawMouth(ctx, R, ry, face.mouth);
+  }
+
+  function drawBrows(ctx, R, rx, ry, brow) {
+    if (brow === 'neutral' || brow === 'soft') return;
+    const y = -ry * 0.43;
+    ctx.save();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = Math.max(1.15, R * 0.055);
+    ctx.lineCap = 'round';
+    for (const sd of [-1, 1]) {
+      let lift = 0;
+      let tilt = 0;
+      if (brow === 'raised') lift = -R * 0.08;
+      if (brow === 'focused') lift = R * 0.04;
+      if (brow === 'concerned') { lift = -R * 0.02; tilt = sd * 0.16; }
+      if (brow === 'skeptic') { lift = sd < 0 ? -R * 0.09 : R * 0.04; tilt = sd < 0 ? -0.1 : 0.08; }
+      if (brow === 'uneven') { lift = sd < 0 ? -R * 0.08 : R * 0.05; tilt = sd * 0.1; }
+      ctx.save();
+      ctx.translate(sd * rx * 0.34, y + lift);
+      ctx.rotate(tilt);
+      ctx.beginPath(); ctx.moveTo(-R * 0.11, 0); ctx.lineTo(R * 0.11, 0); ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  function drawMouth(ctx, R, ry, mouth) {
+    const y = ry * 0.39;
+    ctx.save();
+    ctx.strokeStyle = INK;
+    ctx.fillStyle = INK;
+    ctx.lineWidth = Math.max(1.15, R * 0.052);
+    ctx.lineCap = 'round';
+    if (mouth === 'smile') {
+      ctx.beginPath(); ctx.arc(0, y - R * 0.04, R * 0.2, 0.12 * Math.PI, 0.88 * Math.PI); ctx.stroke();
+    } else if (mouth === 'frown' || mouth === 'concerned') {
+      ctx.beginPath(); ctx.arc(0, y + R * 0.16, R * 0.18, 1.12 * Math.PI, 1.88 * Math.PI); ctx.stroke();
+    } else if (mouth === 'uncertain') {
+      ctx.beginPath(); ctx.moveTo(-R * 0.16, y); ctx.quadraticCurveTo(0, y - R * 0.08, R * 0.16, y + R * 0.03); ctx.stroke();
+    } else if (mouth === 'determined') {
+      rr(ctx, -R * 0.19, y - R * 0.035, R * 0.38, R * 0.07, R * 0.035); ctx.fill();
+    } else if (mouth === 'small') {
+      ctx.beginPath(); ctx.arc(0, y, R * 0.045, 0, Math.PI * 2); ctx.fill();
+    } else if (mouth === 'flat') {
+      ctx.beginPath(); ctx.moveTo(-R * 0.15, y); ctx.lineTo(R * 0.15, y); ctx.stroke();
+    } else {
+      ctx.beginPath(); ctx.moveTo(-R * 0.1, y); ctx.lineTo(R * 0.1, y); ctx.stroke();
     }
     ctx.restore();
   }
@@ -474,6 +565,9 @@
     // gaze targets: cursor, bent by state (thinking looks away, sleep drops)
     let ty = C.lookX * 0.62, tp = C.lookY * 0.5;
     const bias = LOOK[C.state];
+    const faceGaze = (EXPRESSIONS[C.expression] || EXPRESSIONS.idle).gaze || [0, 0];
+    ty = ty * 0.72 + faceGaze[0] * 0.28;
+    tp = tp * 0.72 + faceGaze[1] * 0.28;
     if (bias) { ty = ty * 0.35 + bias[0] * 0.55; tp = tp * 0.3 + bias[1] * 0.5; }
     if (C.state === 'sleeping') { ty = 0; tp = -0.14; }
     const still = (t - (C.lastCursorT || 0)) > 3;
@@ -580,10 +674,12 @@
 
   const api = {
     states: STATES.slice(),
+    expressions: EXPRESSION_NAMES.slice(),
     get state() { return C.state; },
+    get expression() { return C.expression; },
     get fps() { return C.fps; },
     get look() { return { yaw: C.yaw, pitch: C.pitch }; },
-    setState, blink, greet, pokeReact, attach, setCursor, setHover, armSleep, wake, setPeek,
+    setState, setExpression, blink, greet, pokeReact, attach, setCursor, setHover, armSleep, wake, setPeek,
     poke(x, y) { // attention dart toward the poke point (mousedown feedback)
       if (typeof x === 'number') setCursor(x, typeof y === 'number' ? y : 0);
       if (!C.reduced) anim('sy', [[0.94, 90, Ease.out], [1, 200, Ease.back]]);

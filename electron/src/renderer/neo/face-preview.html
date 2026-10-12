@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trace face lab</title>
+  <link rel="stylesheet" href="face-preview.css">
+</head>
+<body>
+  <header>
+    <div>
+      <p class="eyebrow">Trace · development tool</p>
+      <h1>Face lab</h1>
+      <p class="intro">A quiet gallery of every expression at the size Trace actually uses.</p>
+    </div>
+    <p class="hint">Click a card to open it larger.</p>
+  </header>
+  <main id="gallery" aria-label="Trace expressions"></main>
+  <script>
+    const expressions = [
+      'idle', 'curious', 'happy', 'excited', 'skeptical', 'confused',
+      'focused', 'sleepy', 'thinking', 'investigating', 'reading', 'writing',
+      'waiting', 'verifying', 'success', 'warning', 'error',
+      'backend_unavailable', 'cancelled'
+    ];
+    const gallery = document.getElementById('gallery');
+    expressions.forEach((name) => {
+      const card = document.createElement('a');
+      card.className = 'card';
+      card.href = 'face-preview-frame.html?expression=' + encodeURIComponent(name);
+      card.target = '_blank';
+      card.rel = 'noreferrer';
+      card.innerHTML = '<iframe title="' + name + ' expression" src="face-preview-frame.html?expression=' + encodeURIComponent(name) + '"></iframe><span>' + name.replaceAll('_', ' ') + '</span>';
+      gallery.appendChild(card);
+    });
+  </script>
+</body>
+</html>
