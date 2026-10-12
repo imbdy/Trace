@@ -67,4 +67,14 @@ p, .card, li { -webkit-user-select: text; user-select: text; }
 .follow-note { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
 .follow-note.error { color: var(--red); }
 .gitctx { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+.history-bar { margin: 8px 0 22px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(233,236,241,.03); }
+.history-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.history-title { color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+.history-search { width: 150px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--code); color: var(--fg); }
+.history-search:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.history-list { display: flex; gap: 7px; overflow-x: auto; padding-top: 9px; }
+.history-item { flex: 0 0 190px; display: flex; flex-direction: column; gap: 3px; text-align: left; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--fg); cursor: pointer; }
+.history-item:hover { border-color: var(--accent); }
+.history-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.history-date { color: var(--muted); font-size: 11px; }
 @media (max-width: 620px) { .follow-row { flex-direction: column; } .follow-send { min-height: 38px; } }

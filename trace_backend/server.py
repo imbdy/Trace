@@ -282,13 +282,21 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
         def _history_list(self, query: str) -> dict:
             """GET /api/v1/investigations?limit=N — newest-first summaries."""
             limit = 50
+            needle = ""
             try:
-                raw = urllib.parse.parse_qs(query).get("limit", [""])[0]
+                params = urllib.parse.parse_qs(query)
+                raw = params.get("limit", [""])[0]
+                needle = params.get("q", [""])[0].strip().lower()
                 if raw:
                     limit = int(raw)
             except ValueError:
                 limit = 50  # a bogus limit must never break the listing
-            entries = store.list_history(limit)
+            entries = store.list_history(500 if needle else limit)
+            if needle:
+                entries = [entry for entry in entries if needle in " ".join(
+                    str(entry.get(key, "")) for key in
+                    ("summary", "request_text_preview", "project_dir")
+                ).lower()]
             return {"investigations": entries, "count": len(entries)}
 
         # -- routes -------------------------------------------------------

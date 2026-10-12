@@ -9,6 +9,35 @@ const root = document.querySelector("#root") as HTMLElement;
 let activeInvestigation = "";
 let followUpBusy = false;
 
+function historyBar(): HTMLElement {
+  const bar = el("section", "history-bar");
+  const head = el("div", "history-head");
+  head.appendChild(el("span", "history-title", "Past investigations"));
+  const search = el("input", "history-search") as HTMLInputElement;
+  search.placeholder = "Search…"; search.type = "search";
+  head.appendChild(search); bar.appendChild(head);
+  const list = el("div", "history-list");
+  const refresh = async (): Promise<void> => {
+    list.replaceChildren(el("span", "muted", "Loading history…"));
+    const entries = await window.trace.history(search.value).catch(() => []);
+    list.replaceChildren();
+    if (!entries.length) { list.appendChild(el("span", "muted", "No past investigations yet.")); return; }
+    for (const item of entries) {
+      const id = typeof item.investigation_id === "string" ? item.investigation_id : "";
+      if (!id) continue;
+      const button = el("button", "history-item") as HTMLButtonElement;
+      const summary = typeof item.summary === "string" && item.summary.trim() ? item.summary : "Investigation";
+      const date = typeof item.created_at === "number" ? new Date(item.created_at * 1000).toLocaleString() : "";
+      button.append(el("span", "history-summary", summary), el("span", "history-date", date));
+      button.addEventListener("click", () => void window.trace.showHistory(id));
+      list.appendChild(button);
+    }
+  };
+  search.addEventListener("input", () => void refresh());
+  bar.appendChild(list); void refresh();
+  return bar;
+}
+
 function el(tag: string, cls: string, text?: string): HTMLElement {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -172,6 +201,7 @@ function render(status: RendererStatus): void {
   activeInvestigation = status.investigation_id || activeInvestigation;
   if (status.status !== "running") followUpBusy = false;
   root.innerHTML = "";
+  root.appendChild(historyBar());
   if (status.status === "cancelled") {
     banner("Investigation cancelled — no results. Submit a new request when ready.", "info");
     return;
