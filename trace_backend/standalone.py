@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 import dataclasses
 
-from .config import TraceConfig
-from .server import run_server
+from trace_backend.config import TraceConfig
+from trace_backend.server import run_server
 
 
 def main() -> None:
