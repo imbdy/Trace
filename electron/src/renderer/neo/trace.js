@@ -36,6 +36,19 @@
     return map[stage] || 'Working…';
   }
 
+  var EXPRESSION_FOR_STAGE = {
+    receive: 'thinking',
+    screenshot: 'investigating',
+    context: 'reading',
+    project_root: 'investigating',
+    error_extract: 'reading',
+    read_files: 'reading',
+    diagnostics: 'verifying',
+    model_analysis: 'thinking',
+    validate: 'verifying',
+    report: 'writing',
+  };
+
   function onStage(ev) {
     if (!ev) return;
     // Stale events from a previous run (e.g. after cancel) are ignored.
@@ -53,7 +66,7 @@
       try {
         if (ev.stage === 'done') { /* terminal verdict arrives via report */ }
         else if (ev.stage === 'error' || ev.stage === 'cancelled') { /* terminal, via report */ }
-        else c.working('Trace', label);
+        else c.working('Trace', label, EXPRESSION_FOR_STAGE[ev.stage] || 'investigating');
       } catch (e) {}
     }
   }
@@ -65,7 +78,7 @@
     var p = panel();
     if (status.status === 'cancelled') {
       if (p) { try { p.finish('cancelled', currentId, 'Investigation'); } catch (e) {} }
-      if (c) { try { c.idle('that one was stopped.'); } catch (e) {} }
+      if (c) { try { c.cancelled('that one was stopped.'); } catch (e) {} }
       currentId = null;
       return;
     }
@@ -79,6 +92,7 @@
     var rep = status.report;
     var findings = Array.isArray(rep.findings) ? rep.findings : [];
     var verified = findings.filter(function (f) { return f && f.verified; }).length;
+    var warnings = Array.isArray(rep.warnings) ? rep.warnings.length : 0;
     if (p) {
       try {
         p.finish('done', rep.investigation_id || currentId, 'Investigation');
@@ -89,7 +103,10 @@
       } catch (e) {}
     }
     if (c) {
-      try { c.done('Done', verified ? verified + ' verified spot' + (verified === 1 ? '' : 's') + ' — all set.' : 'no solid location — all set.', verified); }
+      try {
+        if (warnings && !verified) c.warning('Review this', String(rep.warnings[0]).slice(0, 90));
+        else c.done('Done', verified ? verified + ' verified spot' + (verified === 1 ? '' : 's') + ' — all set.' : 'no solid location — all set.', verified, verified ? 'excited' : 'success');
+      }
       catch (e) {}
     }
     currentId = null;
@@ -101,7 +118,7 @@
     setRunning(true);
     var c = shell();
     var p = panel();
-    if (c) { try { c.working('Trace', 'Sending request…'); } catch (e) {} }
+    if (c) { try { c.working('Trace', 'Sending request…', 'thinking'); } catch (e) {} }
     return window.trace.submit(String(text).slice(0, 8000)).then(function (res) {
       if (!res || res.ok === false) {
         setRunning(false);
@@ -133,7 +150,7 @@
           var c = shell();
           if (!c) return;
           try {
-            if (!info.ok) c.error('Hmm', String(info.message || 'backend is down.').slice(0, 90));
+            if (!info.ok) c.backendUnavailable(String(info.message || 'backend is down.').slice(0, 90));
           } catch (e) {}
         });
       }

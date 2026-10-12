@@ -189,13 +189,13 @@
     thinking(msg) {
       say('thinking', 'Trace', msg || 'let me think…', '');
     },
-    working(title, msg) {
+    working(title, msg, expression) {
       clearSettle();
-      say('working', concise(title || 'Trace', 28), msg || 'checking your files…', 'working');
+      say(expression || 'working', concise(title || 'Trace', 28), msg || 'checking your files…', 'working');
     },
-    done(title, msg, findingCount) {
+    done(title, msg, findingCount, expression) {
       clearSettle();
-      say('success', concise(title || 'Done', 28), msg || 'all set.', 'done');
+      say(expression || 'success', concise(title || 'Done', 28), msg || 'all set.', 'done');
       murmur('all set.');
       setBadge(typeof findingCount === 'number' ? findingCount : 0);
       api._settle = setTimeout(function () {
@@ -211,6 +211,25 @@
         api._settle = null;
         if (!Sh.open) api.idle();
       }, 6000);
+    },
+    warning(title, msg) {
+      clearSettle();
+      say('warning', concise(title || 'Heads up', 28), msg || 'there is something to check.', 'warning');
+      murmur(msg || 'there is something to check.');
+    },
+    backendUnavailable(msg) {
+      clearSettle();
+      say('backend_unavailable', 'Hmm', msg || 'backend unavailable — could not start it.', 'error');
+      murmur('the backend is unavailable.');
+    },
+    cancelled(msg) {
+      clearSettle();
+      say('cancelled', 'Stopped', msg || 'that one was stopped.', '');
+      murmur(msg || 'that one was stopped.');
+      api._settle = setTimeout(function () {
+        api._settle = null;
+        if (!Sh.open) api.idle();
+      }, 3000);
     },
     attention(title, msg) {
       // Results are in: stand at attention, murmur once. The results window

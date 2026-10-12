@@ -37,7 +37,9 @@ class TestFrontendGuards(unittest.TestCase):
                     "main/placement.js", "main/settings.js",
                     "preload.ts",
                     "renderer/neo/index.html", "renderer/neo/style.css",
-                    "renderer/neo/hearthling.js", "renderer/neo/leaf.js",
+                    "renderer/neo/hearthling.js", "renderer/neo/face-preview.html",
+                    "renderer/neo/face-preview-frame.html", "renderer/neo/face-preview.css",
+                    "renderer/neo/face-preview-frame.js", "renderer/neo/leaf.js",
                     "renderer/neo/shell.js", "renderer/neo/trace.js",
                     "renderer/results.html", "renderer/results.css",
                     "renderer/results.ts", "shared/protocol.ts"):
@@ -121,9 +123,9 @@ class TestFrontendGuards(unittest.TestCase):
 
 
 class TestNeoFidelity(unittest.TestCase):
-    # Documented Trace patches to Neo's face renderer (everything else
-    # must stay byte-identical). The width patch narrows ONLY the body's
-    # horizontal radius: same height, features undistorted, eyes closer.
+    # Documented Trace patches to Neo's face renderer. The original renderer
+    # remains the source of the body, eye, badge, particle, and animation
+    # primitives; Trace adds a small expressive layer around those primitives.
     FACE_PATCHES = [
         ("window.Hearthling = api;", "window.TraceFace = api;"),
         ("    const rx = R * 1.10, ry = R * 0.92; // compact and wide: he sits, not floats",
@@ -131,16 +133,34 @@ class TestNeoFidelity(unittest.TestCase):
     ]
 
     def test_face_is_neos_verbatim(self):
-        """hearthling.js == Neo's face renderer modulo documented patches."""
+        """Core face primitives stay byte-identical to Neo's renderer."""
         neo = NEO_FACE.read_text(encoding="utf-8")
         for old, new in self.FACE_PATCHES:
             self.assertIn(old, neo, "Neo source changed upstream?")
             neo = neo.replace(old, new)
-        # header line replaced by transplant note; drop line 1 on both sides
-        neo_body = neo.splitlines()[1:]
-        trace_body = (SRC / "renderer/neo/hearthling.js").read_text(
-            encoding="utf-8").splitlines()[1:]
-        self.assertEqual(trace_body, neo_body)
+        trace = (SRC / "renderer/neo/hearthling.js").read_text(encoding="utf-8")
+
+        def function_block(text, name):
+            start = text.index("function " + name)
+            brace = text.index("{", start)
+            depth = 0
+            for i in range(brace, len(text)):
+                if text[i] == "{": depth += 1
+                elif text[i] == "}":
+                    depth -= 1
+                    if depth == 0: return text[start:i + 1]
+            self.fail("unclosed function: " + name)
+
+        for name in ("rr", "drawEyeShape", "drawBadge", "drawSparks"):
+            self.assertEqual(function_block(trace, name), function_block(neo, name), name)
+
+        for name in ("idle", "curious", "happy", "excited", "skeptical", "confused",
+                     "focused", "sleepy", "thinking", "investigating", "reading",
+                     "writing", "waiting", "verifying", "success", "warning", "error",
+                     "backend_unavailable", "cancelled"):
+            self.assertRegex(trace, r"\b" + name + r"\s*:")
+        self.assertIn("expressions: EXPRESSION_NAMES.slice()", trace)
+        self.assertIn("setExpression", trace)
 
 
 if __name__ == "__main__":
