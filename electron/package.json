@@ -1,6 +1,6 @@
 {
   "name": "trace-desktop",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "author": "imbdy",
   "description": "Trace independent debugging companion (Electron frontend, Python backend)",
