@@ -67,6 +67,29 @@ class TestFrontendGuards(unittest.TestCase):
             text = (SRC / name).read_text(encoding="utf-8")
             self.assertIn("window.trace", text, name)
 
+    def test_cancel_is_reachable_through_the_driver(self):
+        """Cancel must be driven by TraceDriver, not the bridge directly.
+
+        `#ctl-cancel` ships disabled and the ONLY thing that ever enables it is
+        TraceShellCtl.setAskEnabled(false) — called solely from
+        TraceDriver.setRunning(true). A shell that calls window.trace.cancel
+        itself never flips `running`, so the button stays disabled and a live
+        investigation cannot be stopped from the UI at all.
+        """
+        shell = (SRC / "renderer/neo/shell.js").read_text(encoding="utf-8")
+        driver = (SRC / "renderer/neo/trace.js").read_text(encoding="utf-8")
+        self.assertIn("window.TraceDriver", shell,
+                      "shell.js must reach the driver to flip the running state")
+        self.assertRegex(
+            shell, r"wire\('ctl-cancel'[\s\S]{0,120}?doCancel\(\)",
+            "the cancel control must route through the driver")
+        self.assertRegex(
+            shell, r"doSubmit\(\s*text\s*\)",
+            "submit must route through the driver so the busy-guard applies")
+        # the driver is what actually owns `running` for both buttons
+        self.assertRegex(driver, r"setAskEnabled\(!on\)",
+                         "setRunning must toggle ask/cancel via the shell control")
+
     def test_renderer_scripts_parse(self):
         """Every renderer script must parse: a syntax error kills the whole
         IIFE file silently (no shell = no expansion, no stitch, no verdict)."""

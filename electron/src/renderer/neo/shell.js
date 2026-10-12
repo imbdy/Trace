@@ -353,12 +353,28 @@
     if (c) c.disabled = on;
   }
   wire('leaf-fold', function () { api.collapse(); });
+  // Submit/cancel go through TraceDriver (trace.js), never straight to the
+  // bridge: the driver owns `running`, which is what enables Cancel while an
+  // investigation is in flight. Bypassing it left ctl-cancel permanently
+  // disabled, so a live run could not be stopped from the UI.
+  function driver() { return window.TraceDriver || null; }
+  function doSubmit(text) {
+    var d = driver();
+    if (d && typeof d.submit === 'function') return d.submit(text);
+    if (window.trace && window.trace.submit) return window.trace.submit(text);
+    return Promise.resolve({ ok: false, reason: 'no-bridge' });
+  }
+  function doCancel() {
+    var d = driver();
+    if (d && typeof d.cancel === 'function') return d.cancel();
+    if (window.trace && window.trace.cancel) return window.trace.cancel();
+    return Promise.resolve({ ok: false });
+  }
   wire('ask-send', function () {
     var text = (askText() || '').trim();
     if (!text) { murmur('ask me something first.', true); return; }
     try {
-      if (window.trace && window.trace.submit) {
-        window.trace.submit(text).then(function (res) {
+      doSubmit(text).then(function (res) {
           if (res && res.ok === false && res.reason === 'busy') murmur('one at a time — cancel first.', true);
           else if (res && res.ok === false) murmur('could not start that one.', true);
           else {
@@ -366,11 +382,10 @@
             if (t) t.value = '';
           }
         }).catch(function () { murmur('could not start that one.', true); });
-      }
     } catch (e) {}
   });
   wire('ctl-cancel', function () {
-    try { if (window.trace && window.trace.cancel) window.trace.cancel(); } catch (e) {}
+    try { doCancel(); } catch (e) {}
   });
   wire('ctl-results', function () {
     try { if (window.trace && window.trace.showResults) window.trace.showResults(); } catch (e) {}
