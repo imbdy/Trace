@@ -37,6 +37,12 @@ class TraceConfig:
     diagnostics_timeout_s: float = 30.0
     bind_host: str = DEFAULT_BIND_HOST
     bind_port: int = DEFAULT_BIND_PORT
+    # Investigation history: one small JSON file per finished investigation so
+    # a completed verdict survives a restart and can be recalled (and followed
+    # up on) without re-running the model. Disable with TRACE_HISTORY=0.
+    history_enabled: bool = True
+    history_dir: str | None = None  # None → default_history_dir()
+    history_max_entries: int = 500
 
     @classmethod
     def from_env(cls) -> "TraceConfig":
@@ -48,6 +54,10 @@ class TraceConfig:
             read_timeout_s=float(os.environ.get("TRACE_READ_TIMEOUT_S", "120")),
             bind_host=os.environ.get("TRACE_BIND_HOST", DEFAULT_BIND_HOST),
             bind_port=int(os.environ.get("TRACE_BIND_PORT", str(DEFAULT_BIND_PORT))),
+            history_enabled=os.environ.get("TRACE_HISTORY", "1").strip().lower()
+            not in ("0", "false", "no", "off"),
+            history_max_entries=int(os.environ.get("TRACE_HISTORY_MAX", "500")),
+            history_dir=os.environ.get("TRACE_HISTORY_DIR") or None,
         )
 
     def validate(self) -> list[str]:

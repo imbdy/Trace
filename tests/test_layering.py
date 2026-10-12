@@ -113,17 +113,25 @@ class TestLayering(unittest.TestCase):
             allow_rel={"config", "context_collector", "ollama_client",
                        "project_inspector", "schemas", "screenshot_service",
                        "validator"},
-            forbid_rel={"server"},
+            forbid_rel={"server", "history"},
             message="L2 orchestrator must not depend on HTTP hosting"))
 
     def test_server_is_thin_hosting(self):
         self.assertIsNone(check_file(
             "trace_backend/server.py",
             allow_abs={"trace_backend"},
-            allow_rel={"config", "investigation_engine", "schemas"},
+            allow_rel={"config", "history", "investigation_engine", "schemas"},
             forbid_rel={"ollama_client", "screenshot_service",
                         "project_inspector", "context_collector", "validator"},
             message="server hosts the engine; evidence/model stay behind it"))
+
+    def test_history_journal_is_stdlib_only(self):
+        # The journal is dict-based on purpose: it must survive without the
+        # schema layer (or any other Trace component) so a stored verdict can
+        # always be read back.
+        self.assertIsNone(check_file(
+            "trace_backend/history.py",
+            message="history must not import schemas/engine/server"))
 
     def test_transport_is_stdlib_only(self):
         self.assertIsNone(check_file(

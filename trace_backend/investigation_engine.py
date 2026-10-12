@@ -10,6 +10,9 @@ read_files → diagnostics → model_analysis → validate → report.
 - Supports cancellation via threading.Event at every stage + during streaming.
 - Malformed model output degrades to a low-confidence honest report, never
   a fabricated one.
+- ``follow_up`` answers a question about an existing verdict: the prior
+  report is the context (re-read from disk where it can be), and the answer
+  passes through the same validator as a first-pass report.
 """
 
 from __future__ import annotations
@@ -31,6 +34,8 @@ from .project_inspector import (
     find_project_root,
     follow_imports,
     list_candidate_files,
+    redact_secrets,
+    resolve_within_root,
     safe_read,
 )
 from .schemas import (
@@ -75,6 +80,73 @@ diagnostic step in needs_more_info."""
 def _check_cancelled(cancel: threading.Event | None):
     if cancel is not None and cancel.is_set():
         raise InvestigationCancelled("Investigation cancelled by user.")
+
+
+FOLLOW_UP_SYSTEM_PROMPT = """You are Trace, a careful debugging assistant continuing an earlier \
+investigation. You receive the PRIOR REPORT (produced earlier; findings marked verified=true were \
+checked against the real files), a FOLLOW-UP QUESTION, and — when available — those same files \
+re-read from disk with numbered lines. Return ONLY valid JSON with this exact schema:
+{"summary": str, "root_cause": str, "confidence": "low"|"medium"|"high",
+  "confidence_rationale": str, "findings": [{"title": str, "file_path": str,
+  "start_line": int, "end_line": int, "explanation": str, "evidence": str}],
+  "recommended_fix": {"description": str, "diff": str, "rationale": str},
+  "alternative_hypotheses": [str], "needs_more_info": [str], "evidence_summary": str}
+Rules: answer the FOLLOW-UP QUESTION, not the original request. Only cite file paths and line \
+numbers that appear in the numbered FILE excerpts or in prior findings marked verified=true. Never \
+invent paths, line numbers, compiler output, or test results. If the question cannot be answered \
+from the evidence, set confidence to "low", separate what is known from what is uncertain, and put \
+the next diagnostic step in needs_more_info."""
+
+
+def _prior_as_dict(prior: InvestigationReport | dict | None) -> dict:
+    """Normalise a prior report (live object or recalled JSON dict) to a dict."""
+    if prior is None:
+        return {}
+    if isinstance(prior, dict):
+        return prior
+    return prior.to_dict()
+
+
+def _prior_report_text(prior: dict) -> str:
+    """Render a prior verdict as model-readable context, or say it is missing."""
+    if not prior:
+        return ("PRIOR REPORT: unavailable — no prior verdict was supplied. Answer "
+                "only from the FOLLOW-UP QUESTION and any FILE excerpts below; if "
+                "that is not enough, say so with confidence \"low\".")
+    lines = [
+        f"PRIOR REPORT (id={prior.get('investigation_id', '')}, "
+        f"confidence={prior.get('confidence', '')}):",
+        f"summary: {prior.get('summary', '')}",
+        f"root_cause: {prior.get('root_cause', '')}",
+    ]
+    if prior.get("confidence_rationale"):
+        lines.append(f"confidence_rationale: {prior['confidence_rationale']}")
+    fix = prior.get("recommended_fix")
+    if isinstance(fix, dict) and (fix.get("description") or fix.get("diff")):
+        lines.append(f"recommended_fix: {fix.get('description', '')}")
+    for h in prior.get("alternative_hypotheses") or []:
+        lines.append(f"alternative_hypothesis: {h}")
+    for f in prior.get("findings") or []:
+        if not isinstance(f, dict):
+            continue
+        lines.append(
+            f"finding: {f.get('title', '')} @ {f.get('file_path', '')}:"
+            f"{f.get('start_line', '')}-{f.get('end_line', '')} "
+            f"verified={bool(f.get('verified'))}: {f.get('explanation', '')}")
+    for n in prior.get("needs_more_info") or []:
+        lines.append(f"needs_more_info: {n}")
+    for w in prior.get("warnings") or []:
+        lines.append(f"warning: {w}")
+    return "\n".join(lines)[:8000]
+
+
+def _numbered(content: str, start: int, end: int) -> str:
+    """A line-numbered slice of ``content`` so the model can cite real lines."""
+    lines = content.splitlines()
+    s, e = max(1, start), min(len(lines), end)
+    if s > e:
+        return ""
+    return "\n".join(f"{i:>5}: {lines[i - 1]}" for i in range(s, e + 1))
 
 
 class InvestigationEngine:
@@ -280,6 +352,150 @@ class InvestigationEngine:
         finally:
             if shot is not None:
                 dispose(shot)
+
+    def follow_up(self, request: InvestigationRequest,
+                  prior_report: InvestigationReport | dict | None,
+                  emit: Callable[[str, str], None] | None = None,
+                  cancel_event: threading.Event | None = None,
+                  investigation_id: str | None = None) -> InvestigationReport:
+        """Answer a follow-up question about an existing verdict.
+
+        Unlike :meth:`investigate` this does not re-collect the project from
+        scratch: the prior report *is* the context. Grounded-truth discipline is
+        unchanged — the model may only cite what the prior report verified or
+        what is re-read from disk here, and every finding in its answer is run
+        through ``validator.sanitize_report`` like any other report.
+        """
+        inv_id = investigation_id or new_investigation_id()
+        parent = request.follow_up_of or ""
+
+        def say(stage: str, message: str):
+            if emit:
+                try:
+                    emit(stage, message)
+                except Exception:
+                    pass
+
+        problems = request.validate()
+        if problems:
+            return InvestigationReport(
+                investigation_id=inv_id, summary="Invalid follow-up request.",
+                root_cause="; ".join(problems), confidence="low",
+                warnings=["Invalid request: " + "; ".join(problems)],
+                follow_up_of=parent)
+
+        # 1. receive
+        _check_cancelled(cancel_event)
+        say("receive", f"Received follow-up question about {parent or 'prior report'}.")
+        prior = _prior_as_dict(prior_report)
+
+        # 2. project root — same tree, so locations stay verifiable
+        _check_cancelled(cancel_event)
+        root: Path | None = None
+        if request.project_dir:
+            root = find_project_root(request.project_dir)
+        needs_more: list[str] = []
+        if root is None:
+            note = ("Project root could not be identified, so follow-up findings "
+                    "cannot be verified against the project files.")
+            say("project_root", note)
+            needs_more.append(note)
+        else:
+            say("project_root", f"Verifying against project root {root}…")
+
+        # 3. re-read the files the prior report cited (bounded, disk-verified)
+        files: list[tuple[Path, str]] = []
+        read_notes: list[str] = []
+        seen: set[Path] = set()
+        if root is not None:
+            say("read_files", "Re-reading the files cited by the prior report…")
+            for f in (prior.get("findings") or [])[:6]:
+                _check_cancelled(cancel_event)
+                if not isinstance(f, dict):
+                    continue
+                rel = str(f.get("file_path", "")).strip()
+                if not rel:
+                    continue
+                content, note = safe_read(root, rel,
+                                          max_bytes=self.config.max_file_bytes)
+                if content is None:
+                    read_notes.append(f"{rel} — {note}")
+                    continue
+                resolved = resolve_within_root(root, rel)
+                p = resolved if resolved is not None else root / rel
+                if p not in seen:
+                    try:
+                        start = int(f.get("start_line", 0) or 0)
+                        end = int(f.get("end_line", 0) or start)
+                    except (TypeError, ValueError):
+                        start, end = 1, 60
+                    excerpt = _numbered(content, max(1, start - 25), end + 25) \
+                        or _numbered(content, 1, 60)
+                    files.append((p, excerpt))
+                    seen.add(p)
+                read_notes.append(f"{rel} ({note})")
+        extra = "\n".join(t for t in [request.terminal_output or "",
+                                      request.editor_selection or "",
+                                      request.extra_context or ""] if t)
+
+        # 4. model analysis
+        say("model_analysis", f"Asking {self.config.ollama_model} about the prior verdict…")
+        parts = [f"FOLLOW-UP QUESTION:\n{request.request_text[:4000]}",
+                 _prior_report_text(prior)]
+        for p, excerpt in files:
+            parts.append(f"FILE (re-read from disk, numbered lines): {p}\n{excerpt}")
+        if extra:
+            parts.append(f"ADDITIONAL CONTEXT:\n{extra[:4000]}")
+        if read_notes:
+            parts.append("RE-READ NOTES:\n" + "; ".join(read_notes)[:2000])
+        if needs_more:
+            parts.append("LIMITATION:\n" + "; ".join(needs_more))
+        bundle = redact_secrets(
+            "\n\n---\n\n".join(parts)[:self.config.max_context_chars])
+        user_prompt = (bundle + "\n\n---\n\nAnswer the FOLLOW-UP QUESTION and return ONLY "
+                        "the JSON report. Do not invent file paths or line numbers.")
+        try:
+            raw = self.ollama.chat(
+                [{"role": "system", "content": FOLLOW_UP_SYSTEM_PROMPT},
+                 {"role": "user", "content": user_prompt}],
+                stream=False, cancel_event=cancel_event,
+                timeout=self.config.read_timeout_s)
+        except OllamaCancelledError as e:
+            raise InvestigationCancelled(str(e)) from e
+        except OllamaError as e:
+            hint = getattr(e, "hint", "")
+            return InvestigationReport(
+                investigation_id=inv_id,
+                summary="Follow-up could not be answered: the model is unavailable.",
+                root_cause=str(e), confidence="low",
+                confidence_rationale="No model verdict; the prior report stands unchanged.",
+                needs_more_info=[hint] if hint else [],
+                evidence_summary=_prior_report_text(prior) + f"\nModel error: {e}",
+                warnings=[f"Ollama error: {e}"], follow_up_of=parent)
+
+        # 5. validate — the same grounded-truth gate as a first-pass report
+        _check_cancelled(cancel_event)
+        say("validate", "Validating file paths and line numbers…")
+        report = self._parse_report(inv_id, raw)
+        report = sanitize_report(root, report)
+        report.follow_up_of = parent
+        if not report.evidence_summary:
+            report.evidence_summary = (
+                f"Follow-up on {parent or 'prior report'}. "
+                + (f"Project root: {root}. " if root is not None
+                   else "Project root unknown; locations could not be verified. ")
+                + f"Files re-read from disk: {len(files)}. "
+                + _prior_report_text(prior)[:1000])
+        if needs_more:
+            report.needs_more_info = [*report.needs_more_info, *needs_more]
+        if not prior:
+            report.warnings.append(
+                "No prior report was supplied; this answer is based on the "
+                "follow-up question and disk excerpts alone.")
+
+        # 6. report
+        say("report", "Follow-up complete.")
+        return report
 
     # -- parsing ------------------------------------------------------------
     @staticmethod
