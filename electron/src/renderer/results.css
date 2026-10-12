@@ -27,6 +27,17 @@ p, li { overflow-wrap: anywhere; }
 .badge { font-weight: 700; font-size: 13px; margin: 0 0 10px; font-family: Consolas, monospace; }
 .badge.high { color: var(--green); } .badge.medium { color: var(--amber); }
 .badge.low { color: var(--muted); }
+.quick-location { color: var(--accent); font-family: Consolas, monospace; font-size: 12px; margin-top: 8px; }
+.copy-box { margin: 12px 0 6px; background: var(--code); border: 1px solid rgba(157,185,255,.28); border-radius: 12px; overflow: hidden; }
+.copy-bar { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: rgba(157,185,255,.08); border-bottom: 1px solid var(--line); }
+.copy-label { color: var(--accent-2); font-size: 12px; font-weight: 700; }
+.copy-btn { border: 1px solid rgba(157,185,255,.42); border-radius: 7px; padding: 4px 12px; background: transparent; color: var(--fg); cursor: pointer; font: inherit; font-size: 12px; }
+.copy-btn:hover { background: var(--accent); color: #101216; }
+.copy-box pre.code { margin: 0; border: 0; border-radius: 0; }
+.details { margin-top: 24px; border-top: 1px solid var(--line); }
+.details-summary { padding: 14px 0 8px; color: var(--muted); cursor: pointer; font-size: 13px; font-weight: 700; }
+.details-summary:hover { color: var(--accent-2); }
+.details-body { padding-bottom: 8px; }
 .banner {
   border: 1px solid var(--amber); border-radius: 14px;
   background: var(--panel); padding: 16px 18px; margin: 20px 0; font-size: 15px; box-shadow: 0 12px 35px rgba(0,0,0,.18);
