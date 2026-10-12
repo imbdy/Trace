@@ -103,7 +103,13 @@ html, body {
   padding: 12px 14px 8px 14px;
   box-sizing: border-box;
   cursor: default;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(233, 236, 241, 0.22) transparent;
 }
+#leaf::-webkit-scrollbar { width: 6px; }
+#leaf::-webkit-scrollbar-track { background: transparent; }
+#leaf::-webkit-scrollbar-thumb { background: rgba(233, 236, 241, 0.22); border-radius: 99px; }
+#leaf::-webkit-scrollbar-thumb:hover { background: rgba(157, 185, 255, 0.65); }
 #leaf-body { display: none; }
 /* ---- horizontal expansion: face stays left, chat slides in beside it ----
    The leaf keeps its collapsed height; only the width grows, rightward. */
@@ -184,11 +190,11 @@ html, body {
 #approval-open:hover { background: #9db9ff; }
 
 /* ---- controls ---- */
-#controls { display: flex; gap: 6px; margin-top: 6px; }
+#controls { display: grid; grid-template-columns: 1fr 1fr 1.15fr; gap: 6px; margin-top: 8px; }
 #controls button {
-  flex: 1 1 auto;
+  min-width: 0; height: 30px; box-sizing: border-box;
   border: 1px solid rgba(233, 236, 241, 0.35); background: transparent; color: rgba(233, 236, 241, 0.75);
-  border-radius: 7px; font-size: 11px; padding: 4px 0; cursor: pointer;
+  border-radius: 8px; font-size: 11px; padding: 0 8px; cursor: pointer; white-space: nowrap;
 }
 #controls button:hover { background: #e9ecf1; color: #101216; border-color: #e9ecf1; }
 #controls button:active { transform: scale(0.96); }
@@ -200,7 +206,7 @@ html, body {
 #brief-list button:active { transform: scale(0.94); }
 #brief-list button:focus-visible { outline: 2px solid #8faeff; outline-offset: 2px; }
 #approval-open:active { transform: scale(0.97); }
-#leaf-foot { font-size: 10px; color: rgba(233, 236, 241, 0.38); margin-top: 4px; font-family: Consolas, monospace; }
+#leaf-foot { font-size: 9px; color: rgba(233, 236, 241, 0.38); margin-top: 7px; font-family: Consolas, monospace; text-align: center; white-space: nowrap; letter-spacing: -0.01em; }
 
 /* ---- verdict (investigation outcome; same role the approval block had) ---- */
 #verdict[hidden] { display: none; }
@@ -218,19 +224,22 @@ html, body {
 /* ---- composer: plain-language debugging requests ---- */
 #ask { display: flex; gap: 6px; margin-top: 4px; align-items: stretch; }
 #ask-text {
-  flex: 1 1 auto; min-width: 0; resize: none;
+  flex: 1 1 auto; min-width: 0; height: 52px; max-height: 52px; box-sizing: border-box; resize: none;
   background: #14171c; color: #e9ecf1;
-  border: 1px solid rgba(233, 236, 241, 0.25); border-radius: 8px;
-  font-size: 12px; line-height: 1.45; padding: 6px 8px;
+  border: 1px solid rgba(233, 236, 241, 0.22); border-radius: 9px;
+  font-size: 12px; line-height: 1.4; padding: 8px 9px; overflow-y: auto;
   font-family: "Segoe UI", system-ui, sans-serif;
   user-select: text;
+  scrollbar-width: thin; scrollbar-color: rgba(233, 236, 241, 0.28) transparent;
 }
+#ask-text::-webkit-scrollbar { width: 5px; }
+#ask-text::-webkit-scrollbar-track { background: transparent; }
+#ask-text::-webkit-scrollbar-thumb { background: rgba(233, 236, 241, 0.28); border-radius: 99px; }
 #ask-text::placeholder { color: rgba(233, 236, 241, 0.38); }
 #ask-text:focus { outline: 2px solid #8faeff; outline-offset: 1px; border-color: transparent; }
 #ask-send {
-  flex: 0 0 auto;
-  border: none; background: #e9ecf1; color: #101216;
-  border-radius: 8px; font-size: 12px; font-weight: 700; padding: 0 14px; cursor: pointer;
+  flex: 0 0 94px; border: none; background: linear-gradient(180deg, #f1f4f9, #d9e0ed); color: #101216;
+  border-radius: 9px; font-size: 12px; font-weight: 700; padding: 0 12px; cursor: pointer; box-shadow: 0 3px 10px rgba(0,0,0,.18);
 }
 #ask-send:hover { background: #9db9ff; }
 #ask-send:active { transform: scale(0.96); }
