@@ -114,10 +114,11 @@ html, body {
 /* ---- horizontal expansion: face stays left, chat slides in beside it ----
    The leaf keeps its collapsed height; only the width grows, rightward. */
 #leaf { transition: width 0.22s cubic-bezier(0.2, 0.9, 0.3, 1); }
-#leaf.open { display: flex; flex-direction: row; gap: 12px; width: 660px; }
-#leaf.open #face-row { flex: 0 0 auto; }
-#leaf.open #leaf-body { display: block; flex: 1 1 auto; min-width: 0; animation: slidein 0.25s ease; }
-@keyframes slidein { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
+#leaf.open { display: flex; flex-direction: column; gap: 11px; width: 560px; }
+#leaf.open #face-row { flex: 0 0 auto; width: 100%; }
+#leaf.open #face-btns { margin-left: auto; }
+#leaf.open #leaf-body { display: block; flex: 0 0 auto; width: 100%; min-width: 0; animation: slidein 0.25s ease; }
+@keyframes slidein { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
 #leaf:not(.open) #leaf-fold { display: none; } /* nothing to fold when shut */
 
 #leaf-head { display: flex; align-items: center; gap: 8px; }
@@ -138,7 +139,11 @@ html, body {
   border-radius: 6px; font-size: 11px; padding: 1px 8px; cursor: pointer;
 }
 #leaf-fold:hover { background: #e9ecf1; color: #101216; border-color: #e9ecf1; }
-#leaf-sub { font-size: 12px; color: rgba(233, 236, 241, 0.6); margin-top: 2px; }
+#leaf-sub {
+  font-size: 12px; line-height: 1.35; color: rgba(233, 236, 241, 0.6); margin-top: 2px;
+  max-width: 100%; overflow-wrap: anywhere; display: -webkit-box;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+}
 
 /* ---- return brief ---- */
 #brief[hidden] { display: none; }
