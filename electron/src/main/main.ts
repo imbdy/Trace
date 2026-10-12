@@ -290,17 +290,19 @@ function emitStage(ev: { investigation_id?: string; stage: string; message: stri
   }
 }
 
-async function runInvestigation(text: string, opts: Record<string, unknown>): Promise<void> {
+async function runInvestigation(text: string, opts: Record<string, unknown>, followUpOf?: string): Promise<void> {
   if (run) return;
   const abort = new AbortController();
   try {
-    const id = await api.start({
-      request_text: text,
-      project_dir: (opts.projectDir as string) || projectDirArg,
-      include_screenshot: true,
-      screenshot_mode: "active",
-      include_clipboard: false,
-    });
+    const id = followUpOf
+      ? await api.followUp(followUpOf, text)
+      : await api.start({
+          request_text: text,
+          project_dir: (opts.projectDir as string) || projectDirArg,
+          include_screenshot: true,
+          screenshot_mode: "active",
+          include_clipboard: false,
+        });
     run = { id, abort };
     emitStage({ investigation_id: id, stage: "receive", message: "Sending request…", progress: 0.02 });
     for await (const ev of api.events(id, abort.signal)) {
@@ -495,6 +497,18 @@ function setupIpc(): void {
       }
     }
     void runInvestigation(text.trim().slice(0, 8000), opts ?? {});
+    return { ok: true as const };
+  });
+
+  ipcMain.handle("trace:follow-up", async (_e, parentId: string, text: string) => {
+    if (run) return { ok: false as const, reason: "busy" };
+    if (typeof parentId !== "string" || !parentId.trim()) return { ok: false as const, reason: "missing_parent" };
+    if (typeof text !== "string" || !text.trim()) return { ok: false as const, reason: "empty" };
+    if (!(await backend.health())) {
+      const ok = await backend.ensure(__dirname);
+      if (!ok) return { ok: false as const, reason: "backend_down" };
+    }
+    void runInvestigation(text.trim().slice(0, 8000), {}, parentId.trim());
     return { ok: true as const };
   });
 

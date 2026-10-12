@@ -25,6 +25,7 @@ from typing import Callable
 
 from .config import TraceConfig
 from .context_collector import LocalContext, collect_local_context
+from .git_context import finding_git_context
 from .ollama_client import OllamaCancelledError, OllamaClient, OllamaError
 from .project_inspector import (
     ErrorInfo,
@@ -147,6 +148,24 @@ def _numbered(content: str, start: int, end: int) -> str:
     if s > e:
         return ""
     return "\n".join(f"{i:>5}: {lines[i - 1]}" for i in range(s, e + 1))
+
+
+def _enrich_git_context(root: Path | None, report: InvestigationReport) -> None:
+    """Attach grounded "last changed in …" VC context to verified findings.
+
+    Best-effort enrichment (see git_context): only verified findings get a
+    value, and any git failure simply leaves ``git_context`` empty — honest,
+    never fabricated.
+    """
+    if root is None:
+        return
+    for f in report.findings:
+        if not f.verified:
+            continue
+        try:
+            f.git_context = finding_git_context(root, f.file_path, f.start_line)
+        except Exception:  # pragma: no cover - git_context is already defensive
+            f.git_context = ""
 
 
 class InvestigationEngine:
@@ -298,7 +317,7 @@ class InvestigationEngine:
             _check_cancelled(cancel_event)
 
             # 8. model analysis
-            emit("model_analysis", f"Asking {self.config.ollama_model} to analyze evidence…")
+            emit("model_analysis", "Thinking through the evidence…")
             bundle = build_model_context(
                 request_text=request.request_text, error=error, files=files,
                 diagnostics=diagnostics, local_summary=ctx.summary() + "\n" + screenshot_note,
@@ -335,6 +354,8 @@ class InvestigationEngine:
             report = self._parse_report(inv_id, raw)
             # Enrich findings with verified excerpts dir context = root.
             report = sanitize_report(root, report)
+            # Add grounded git "last changed" context to verified findings.
+            _enrich_git_context(root, report)
 
             # 10. report
             emit("report", "Investigation complete.")
@@ -439,7 +460,7 @@ class InvestigationEngine:
                                       request.extra_context or ""] if t)
 
         # 4. model analysis
-        say("model_analysis", f"Asking {self.config.ollama_model} about the prior verdict…")
+        say("model_analysis", "Reconsidering the prior verdict…")
         parts = [f"FOLLOW-UP QUESTION:\n{request.request_text[:4000]}",
                  _prior_report_text(prior)]
         for p, excerpt in files:
@@ -479,6 +500,8 @@ class InvestigationEngine:
         report = self._parse_report(inv_id, raw)
         report = sanitize_report(root, report)
         report.follow_up_of = parent
+        # Add grounded git "last changed" context to verified findings.
+        _enrich_git_context(root, report)
         if not report.evidence_summary:
             report.evidence_summary = (
                 f"Follow-up on {parent or 'prior report'}. "

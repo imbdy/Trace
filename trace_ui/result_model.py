@@ -26,6 +26,8 @@ class FindingView:
     verified: bool
     location_label: str = ""
     verification_note: str = ""
+    # Grounded version-control context ("last changed in commit …") or "".
+    git_context: str = ""
 
 
 @dataclass
@@ -43,6 +45,9 @@ class ResultView:
     fix_description: str = ""
     fix_diff: str = ""
     fix_rationale: str = ""
+    # True only when the fix's diff was verified against the real file; a fix
+    # shown with this False must not be treated as applicable.
+    fix_diff_verified: bool = False
     alternative_hypotheses: list[str] = field(default_factory=list)
     needs_more_info: list[str] = field(default_factory=list)
     evidence_summary: str = ""
@@ -116,6 +121,7 @@ def _build(status: dict) -> ResultView:
             confidence=str(f.get("confidence", "low")),
             verified=verified,
             location_label=format_location(str(f.get("file_path", "")), start, end),
+            git_context=_s(f.get("git_context", "")),
             verification_note=(
                 "Verified against files on disk."
                 if verified else
@@ -142,6 +148,7 @@ def _build(status: dict) -> ResultView:
         fix_description=_s(rec.get("description", "")),
         fix_diff=_s(rec.get("diff", ""), 8000),
         fix_rationale=_s(rec.get("rationale", ""), 2000),
+        fix_diff_verified=bool(rec.get("diff_verified", False)),
         alternative_hypotheses=[_s(h, 2000) for h in
                                 (report.get("alternative_hypotheses", []) or [])][:10],
         needs_more_info=[_s(n, 1000) for n in

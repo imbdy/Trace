@@ -56,3 +56,15 @@ ul.tight li { margin: 3px 0; }
 .warn-item { color: var(--amber); }
 .open-note { font-size: 12px; color: var(--muted); margin-top: 6px; }
 p, .card, li { -webkit-user-select: text; user-select: text; }
+.follow-up { margin-top: 28px; padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: rgba(157,185,255,.05); }
+.follow-up h2 { margin-top: 0; }
+.follow-row { display: flex; gap: 8px; align-items: stretch; }
+.follow-input { flex: 1; resize: vertical; min-height: 42px; padding: 9px 10px; border: 1px solid rgba(233,236,241,.22); border-radius: 9px; background: var(--code); color: var(--fg); font: inherit; }
+.follow-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.follow-send { align-self: stretch; min-width: 70px; border: 0; border-radius: 9px; background: var(--accent); color: #101216; font-weight: 700; cursor: pointer; }
+.follow-send:hover { filter: brightness(1.12); }
+.follow-send:disabled, .follow-input:disabled { opacity: .55; cursor: default; }
+.follow-note { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+.follow-note.error { color: var(--red); }
+.gitctx { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
+@media (max-width: 620px) { .follow-row { flex-direction: column; } .follow-send { min-height: 38px; } }
