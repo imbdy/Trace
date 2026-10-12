@@ -59,6 +59,25 @@ except the composition roots, which only wire startup (never business logic).
 | L5 renders backend JSON | results renderer builds Diagnosis/Locations/Fix/Evidence from status JSON; incomplete states render as honest banners |
 | Single bridge | Only composition roots (`electron/src/main/main.ts` spawn + IPC, `trace_ui/app.py`, `main.py` CLI) reference both sides, for startup wiring only |
 
+## History & follow-up (recall)
+
+`trace_backend/history.py` is a stdlib-only, dict-based journal: one small JSON
+file per finished investigation (atomic temp-file + `os.replace` writes,
+newest-first listing, count pruning, corrupt-file tolerant). It imports no other
+Trace component on purpose, so a stored verdict stays readable even if the
+schema layer changes.
+
+```
+server.py ──▶ history.py        (owns the journal; records the final status)
+server.py ──▶ engine.follow_up  (prior report as context; same validator gate)
+investigation_engine.py  ✗──▶   history  (the engine never reads history)
+```
+
+A finished investigation is recallable via `GET /api/v1/investigations/{id}`
+and followable via `POST /api/v1/investigations/{id}/follow-up` — see
+docs/API_CONTRACT.md. `TRACE_HISTORY=0` turns the journal off; every route then
+degrades honestly (empty list, 404) instead of failing.
+
 ## Privacy note (unchanged)
 
 `gemma4:31b-cloud` may process submitted context through Ollama's cloud

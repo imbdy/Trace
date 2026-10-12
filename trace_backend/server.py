@@ -4,9 +4,11 @@ Endpoints (see docs/API_CONTRACT.md):
   GET  /api/v1/health
   GET  /api/v1/config                      (redacted)
   POST /api/v1/investigations               start → {investigation_id}
-  GET  /api/v1/investigations/{id}          status / result
+  GET  /api/v1/investigations               history list, newest-first
+  GET  /api/v1/investigations/{id}          status / result (journal fallback)
   GET  /api/v1/investigations/{id}/events   SSE progress stream
   POST /api/v1/investigations/{id}/cancel   cancel a running investigation
+  POST /api/v1/investigations/{id}/follow-up  ask a follow-up question
   POST /api/v1/open-file                    {path, line?} → OS open
 
 Binds to 127.0.0.1 only. Never expose to the network.
@@ -25,8 +27,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from .config import TraceConfig
+from .history import HistoryJournal, default_history_dir
 from .investigation_engine import InvestigationCancelled, InvestigationEngine
 from .schemas import (
+    STAGES,
     InvestigationRequest,
     InvestigationStatus,
     ProgressEvent,
@@ -36,9 +40,14 @@ from .schemas import (
 
 
 class _Job:
-    def __init__(self, inv_id: str, request: InvestigationRequest):
+    def __init__(self, inv_id: str, request: InvestigationRequest,
+                 prior_report: dict | None = None):
         self.id = inv_id
         self.request = request
+        # A follow-up job answers a question about an earlier investigation;
+        # the engine reuses that report as context instead of re-collecting
+        # evidence from scratch.
+        self.prior_report = prior_report
         self.status = "running"
         self.stage = "receive"
         self.progress = 0.0
@@ -49,16 +58,32 @@ class _Job:
         self.cancel = threading.Event()
         self.thread: threading.Thread | None = None
 
+    @property
+    def is_follow_up(self) -> bool:
+        return bool(self.request.follow_up_of) and self.prior_report is not None
+
 
 class InvestigationStore:
-    def __init__(self, engine: InvestigationEngine):
+    def __init__(self, engine: InvestigationEngine,
+                 config: TraceConfig | None = None):
         self.engine = engine
         self.jobs: dict[str, _Job] = {}
         self.lock = threading.Lock()
+        # History is a convenience, never a dependency: when it is disabled or
+        # unavailable, every method below still behaves (recall → 404).
+        self.history: HistoryJournal | None = None
+        if config is not None and config.history_enabled:
+            try:
+                self.history = HistoryJournal(
+                    config.history_dir or default_history_dir(),
+                    max_entries=config.history_max_entries)
+            except Exception:
+                self.history = None
 
-    def start(self, request: InvestigationRequest) -> _Job:
+    def start(self, request: InvestigationRequest,
+              prior_report: dict | None = None) -> _Job:
         inv_id = new_investigation_id()
-        job = _Job(inv_id, request)
+        job = _Job(inv_id, request, prior_report)
         with self.lock:
             self.jobs[inv_id] = job
         t = threading.Thread(target=self._run, args=(job,), daemon=True,
@@ -81,11 +106,24 @@ class InvestigationStore:
         def cb(ev: ProgressEvent):
             self._publish(job, ev)
 
+        def stage_cb(stage: str, message: str):
+            idx = STAGES.index(stage) if stage in STAGES else 0
+            cb(ProgressEvent(job.id, stage, message, (idx + 1) / len(STAGES)))
+
         try:
-            report = self.engine.investigate(
-                job.request, progress_cb=cb,
-                cancel_event=job.cancel, investigation_id=job.id)
+            if job.is_follow_up:
+                report = self.engine.follow_up(
+                    job.request, job.prior_report, stage_cb,
+                    job.cancel, investigation_id=job.id)
+            else:
+                report = self.engine.investigate(
+                    job.request, progress_cb=cb,
+                    cancel_event=job.cancel, investigation_id=job.id)
             job.report = report.to_dict()
+            if job.request.follow_up_of and not job.report.get("follow_up_of"):
+                # The request asked for a follow-up: keep the link visible even
+                # if the engine had to fall back to the first-pass path.
+                job.report["follow_up_of"] = job.request.follow_up_of
             if job.cancel.is_set():
                 job.status = "cancelled"
             else:
@@ -108,10 +146,81 @@ class InvestigationStore:
                     q.put_nowait(None)  # stream terminator
                 except queue.Full:
                     pass
+            self._record(job)
+
+    def _record(self, job: _Job) -> None:
+        """Persist the final verdict so it survives a restart."""
+        if self.history is None:
+            return
+        report = job.report or {}
+        self.history.record(job.id, {
+            "investigation_id": job.id,
+            "status": job.status,
+            "progress": job.progress,
+            "stage": job.stage,
+            "created_at": report.get("created_at") or time.time(),
+            "report": job.report,
+            "error": job.error,
+            "request": {
+                "request_text_preview": (job.request.request_text or "")[:300],
+                "project_dir": job.request.project_dir or "",
+                "follow_up_of": job.request.follow_up_of or "",
+            },
+        })
 
     def get(self, inv_id: str) -> _Job | None:
         with self.lock:
             return self.jobs.get(inv_id)
+
+    def list_history(self, limit: int = 50) -> list[dict]:
+        """Newest-first summaries of past investigations (may be empty)."""
+        if self.history is None:
+            return []
+        return self.history.list(limit=limit)
+
+    def recall(self, inv_id: str) -> InvestigationStatus | None:
+        """A finished investigation that is no longer in memory.
+
+        Returns ``None`` when it was never recorded (or history is off), so the
+        caller answers 404 honestly instead of inventing a verdict.
+        """
+        if self.history is None:
+            return None
+        payload = self.history.get(inv_id)
+        if payload is None:
+            return None
+        report = payload.get("report")
+        error = payload.get("error")
+        return InvestigationStatus(
+            investigation_id=payload.get("investigation_id") or inv_id,
+            status=payload.get("status", "done"),
+            progress=float(payload.get("progress") or 1.0),
+            stage=payload.get("stage", "report"),
+            report=report if isinstance(report, dict) else None,
+            error=error if isinstance(error, dict) else None)
+
+    def resolve_report(self, inv_id: str) -> dict | None:
+        """The report for ``inv_id``: in-memory job first, then the journal."""
+        job = self.get(inv_id)
+        if job is not None and job.report is not None:
+            return job.report
+        if job is not None and job.status == "running":
+            return None  # it exists but has no verdict yet
+        recalled = self.recall(inv_id)
+        return recalled.report if recalled is not None else None
+
+    def request_context(self, inv_id: str) -> dict:
+        """The recorded request (project_dir etc.) for a past investigation."""
+        job = self.get(inv_id)
+        if job is not None:
+            return {"request_text": job.request.request_text,
+                    "project_dir": job.request.project_dir or "",
+                    "follow_up_of": job.request.follow_up_of or ""}
+        if self.history is None:
+            return {}
+        payload = self.history.get(inv_id) or {}
+        req = payload.get("request")
+        return req if isinstance(req, dict) else {}
 
     def cancel(self, inv_id: str) -> bool:
         job = self.get(inv_id)
@@ -170,6 +279,18 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
             except json.JSONDecodeError:
                 return {}
 
+        def _history_list(self, query: str) -> dict:
+            """GET /api/v1/investigations?limit=N — newest-first summaries."""
+            limit = 50
+            try:
+                raw = urllib.parse.parse_qs(query).get("limit", [""])[0]
+                if raw:
+                    limit = int(raw)
+            except ValueError:
+                limit = 50  # a bogus limit must never break the listing
+            entries = store.list_history(limit)
+            return {"investigations": entries, "count": len(entries)}
+
         # -- routes -------------------------------------------------------
         def do_GET(self):
             parsed = urllib.parse.urlparse(self.path)
@@ -179,18 +300,25 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                                         "time": time.time()})
             if path == "/api/v1/config":
                 return self._send_json(config.redacted())
+            if path == "/api/v1/investigations":
+                return self._send_json(self._history_list(parsed.query))
             parts = path.split("/")
             # /api/v1/investigations/{id}[/events]
             if len(parts) == 5 and parts[1:4] == ["api", "v1", "investigations"]:
                 job = store.get(parts[4])
-                if job is None:
+                if job is not None:
+                    status = InvestigationStatus(
+                        investigation_id=job.id, status=job.status,
+                        progress=job.progress, stage=job.stage,
+                        report=job.report, error=job.error)
+                    return self._send_json(status.to_dict())
+                # Not in memory: fall back to the journal so a verdict stays
+                # recallable after a restart. Absent there → honest 404.
+                recalled = store.recall(parts[4])
+                if recalled is None:
                     return self._send_json(error_envelope(
                         "not_found", f"Unknown investigation {parts[4]}"), 404)
-                status = InvestigationStatus(
-                    investigation_id=job.id, status=job.status,
-                    progress=job.progress, stage=job.stage,
-                    report=job.report, error=job.error)
-                return self._send_json(status.to_dict())
+                return self._send_json(recalled.to_dict())
             if (len(parts) == 6 and parts[1:4] == ["api", "v1", "investigations"]
                     and parts[5] == "events"):
                 return self._stream_events(parts[4])
@@ -249,7 +377,16 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                 if problems:
                     return self._send_json(error_envelope(
                         "bad_request", "; ".join(problems)), 400)
-                job = store.start(req)
+                # follow_up_of in the body is equivalent to the follow-up
+                # route: resolve the parent, or refuse honestly.
+                prior = store.resolve_report(req.follow_up_of) \
+                    if req.follow_up_of else None
+                if req.follow_up_of and prior is None:
+                    return self._send_json(error_envelope(
+                        "not_found",
+                        f"No completed report for {req.follow_up_of} "
+                        "to follow up on"), 404)
+                job = store.start(req, prior_report=prior)
                 return self._send_json({"investigation_id": job.id}, 202)
             parts = path.split("/")
             if (len(parts) == 6 and parts[1:4] == ["api", "v1", "investigations"]
@@ -263,6 +400,9 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                     return self._send_json(error_envelope(
                         "bad_state", f"Investigation is {job.status}, cannot cancel"), 409)
                 return self._send_json({"ok": True, "investigation_id": parts[4]})
+            if (len(parts) == 6 and parts[1:4] == ["api", "v1", "investigations"]
+                    and parts[5] == "follow-up"):
+                return self._start_follow_up(parts[4])
             if path == "/api/v1/open-file":
                 data = self._read_json()
                 target = str(data.get("path", ""))
@@ -275,6 +415,39 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                 return self._send_json(result,
                                        200 if result.get("ok") else 404)
             return self._send_json(error_envelope("not_found", "Unknown route"), 404)
+
+        def _start_follow_up(self, parent_id: str):
+            """POST /api/v1/investigations/{id}/follow-up → 202.
+
+            Re-asks the model about an existing verdict. The parent report is
+            resolved from memory first and the journal second, so a follow-up
+            also works after a restart. The new investigation links back with
+            ``follow_up_of``.
+            """
+            data = self._read_json()
+            prior = store.resolve_report(parent_id)
+            if prior is None:
+                return self._send_json(error_envelope(
+                    "not_found",
+                    f"No completed report for {parent_id} to follow up on"), 404)
+            # Keep the parent's project unless the caller overrides it: the
+            # follow-up still verifies locations against the same tree.
+            project_dir = str(data.get("project_dir") or "") \
+                or store.request_context(parent_id).get("project_dir") or None
+            req = InvestigationRequest.from_dict({
+                "request_text": data.get("request_text", ""),
+                "project_dir": project_dir,
+                "include_screenshot": False,
+                "include_clipboard": False,
+                "follow_up_of": parent_id,
+            })
+            problems = req.validate()
+            if problems:
+                return self._send_json(error_envelope(
+                    "bad_request", "; ".join(problems)), 400)
+            job = store.start(req, prior_report=prior)
+            return self._send_json({"investigation_id": job.id,
+                                    "follow_up_of": parent_id}, 202)
 
         def do_OPTIONS(self):
             self.send_response(204)
@@ -334,7 +507,7 @@ def run_server(config: TraceConfig | None = None, *,
         raise ValueError("Invalid Trace configuration: " + "; ".join(problems))
     _apply_background_identity()
     engine = engine or InvestigationEngine(config)
-    store = InvestigationStore(engine)
+    store = InvestigationStore(engine, config)
     handler = make_handler(store, config)
     server = ThreadingHTTPServer((config.bind_host, config.bind_port), handler)
     server.daemon_threads = True

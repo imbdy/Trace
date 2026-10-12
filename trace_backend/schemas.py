@@ -26,6 +26,10 @@ class InvestigationRequest:
     editor_selection: str | None = None
     terminal_output: str | None = None
     extra_context: str | None = None
+    # When set, this request is a follow-up question about the investigation
+    # named here: the engine reuses that report as context instead of
+    # re-collecting evidence.
+    follow_up_of: str | None = None
 
     def validate(self) -> list[str]:
         problems: list[str] = []
@@ -33,6 +37,8 @@ class InvestigationRequest:
             problems.append("request_text must not be empty")
         if self.screenshot_mode not in ("active", "full"):
             problems.append("screenshot_mode must be 'active' or 'full'")
+        if self.follow_up_of is not None and not str(self.follow_up_of).strip():
+            problems.append("follow_up_of must be a non-empty investigation id")
         return problems
 
     @classmethod
@@ -46,6 +52,7 @@ class InvestigationRequest:
             editor_selection=data.get("editor_selection"),
             terminal_output=data.get("terminal_output"),
             extra_context=data.get("extra_context"),
+            follow_up_of=data.get("follow_up_of"),
         )
 
     def to_dict(self) -> dict:
@@ -104,6 +111,10 @@ class InvestigationReport:
     evidence_summary: str = ""
     warnings: list[str] = field(default_factory=list)
     created_at: float = field(default_factory=_now)
+    # Set when this report answers a follow-up question about another
+    # investigation: the id of the investigation it continues. Empty for a
+    # first-pass report.
+    follow_up_of: str = ""
 
     def to_dict(self) -> dict:
         d = asdict(self)

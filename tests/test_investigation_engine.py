@@ -18,6 +18,7 @@ from trace_backend.project_inspector import (
 )
 from trace_backend.schemas import InvestigationRequest, InvestigationReport
 from trace_backend.screenshot_service import ScreenshotResult, dispose
+from trace_backend.validator import sanitize_report
 
 
 def _cfg():
@@ -32,10 +33,12 @@ class FakeOllama:
         self.response = response
         self.delay = delay
         self.calls = 0
+        self.last_messages: list = []
 
     def chat(self, messages, **kwargs):
         from trace_backend.ollama_client import OllamaCancelledError
         self.calls += 1
+        self.last_messages = messages
         cancel = kwargs.get("cancel_event")
         if self.delay:
             deadline = time.time() + self.delay
@@ -152,6 +155,110 @@ class TestEngine(unittest.TestCase):
         dispose(r)
         self.assertFalse(Path(fd_path).exists())
         self.assertIsNone(r.temp_path)
+
+
+class TestFollowUp(unittest.TestCase):
+    """Feature 2: asking a follow-up question about a prior verdict."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "pyproject.toml").write_text("[project]\nname='x'\n")
+        (self.root / "app.py").write_text(
+            "def boom(x):\n    return x.strip()\n\n\nboom(None)\n")
+
+    def _engine(self, response=GOOD_JSON, delay: float = 0.0):
+        ollama = FakeOllama(response, delay)
+        return InvestigationEngine(_cfg(), ollama=ollama), ollama
+
+    def _request(self, **kw):
+        base = dict(request_text="which line crashes?",
+                    project_dir=str(self.root), include_screenshot=False,
+                    follow_up_of="inv-parent")
+        base.update(kw)
+        return InvestigationRequest(**base)
+
+    def _prior(self) -> InvestigationReport:
+        rep = InvestigationEngine._parse_report("inv-parent", GOOD_JSON)
+        return sanitize_report(self.root, rep)
+
+    def test_follow_up_reuses_prior_report_and_links_parent(self):
+        engine, ollama = self._engine()
+        prior = self._prior()
+        stages: list[str] = []
+        report = engine.follow_up(self._request(), prior,
+                                  lambda stage, message: stages.append(stage),
+                                  None, investigation_id="inv-child")
+        self.assertEqual(report.investigation_id, "inv-child")
+        self.assertEqual(report.follow_up_of, "inv-parent")
+        self.assertEqual(report.to_dict()["follow_up_of"], "inv-parent")
+        # Findings are validated against disk, exactly like a first-pass run.
+        self.assertTrue(report.findings[0].verified)
+        self.assertTrue(report.findings[0].code_excerpt)
+        self.assertEqual(stages[0], "receive")
+        self.assertIn("model_analysis", stages)
+        self.assertEqual(stages[-1], "report")
+        # The prior verdict was actually sent to the model as context.
+        prompt = ollama.last_messages[-1]["content"]
+        self.assertIn("Null deref", prompt)
+        self.assertIn("inv-parent", prompt)
+        # The cited file was re-read from disk with real line numbers.
+        self.assertIn("def boom(x):", prompt)
+        self.assertIn("   1: def boom(x):", prompt)
+
+    def test_follow_up_accepts_a_recalled_report_dict(self):
+        engine, ollama = self._engine()
+        prior = self._prior().to_dict()
+        report = engine.follow_up(self._request(), prior, None, None,
+                                  investigation_id="inv-child")
+        self.assertEqual(report.follow_up_of, "inv-parent")
+        self.assertIn("inv-parent", ollama.last_messages[-1]["content"])
+
+    def test_follow_up_without_project_dir_is_honest(self):
+        engine, _ = self._engine()
+        report = engine.follow_up(self._request(project_dir=None), self._prior(),
+                                  None, None, investigation_id="inv-child")
+        self.assertEqual(report.follow_up_of, "inv-parent")
+        self.assertTrue(any("Project root" in n for n in report.needs_more_info))
+        # Locations could not be checked, so they are labelled, not dropped.
+        self.assertFalse(report.findings[0].verified)
+        self.assertIn("[UNVERIFIED", report.findings[0].evidence)
+
+    def test_follow_up_without_a_prior_report_says_so(self):
+        engine, _ = self._engine()
+        report = engine.follow_up(self._request(), None, None, None,
+                                  investigation_id="inv-child")
+        self.assertTrue(any("No prior report" in w for w in report.warnings))
+
+    def test_follow_up_validates_the_request(self):
+        engine, ollama = self._engine()
+        report = engine.follow_up(self._request(request_text="  "), self._prior(),
+                                  None, None, investigation_id="inv-child")
+        self.assertEqual(report.confidence, "low")
+        self.assertEqual(ollama.calls, 0)
+        self.assertTrue(any("request_text" in w for w in report.warnings))
+
+    def test_follow_up_can_be_cancelled(self):
+        engine, _ = self._engine(delay=0.5)
+        cancel = threading.Event()
+        errors: list[Exception] = []
+
+        def run():
+            try:
+                engine.follow_up(self._request(), self._prior(), None, cancel,
+                                 investigation_id="inv-child")
+            except Exception as e:  # noqa: BLE001 - test records the failure
+                errors.append(e)
+
+        t = threading.Thread(target=run, daemon=True)
+        t.start()
+        time.sleep(0.2)
+        cancel.set()
+        t.join(timeout=10)
+        self.assertTrue(errors)
+        self.assertIsInstance(errors[0], InvestigationCancelled)
+
 
 
 class TestInspectorSafety(unittest.TestCase):
