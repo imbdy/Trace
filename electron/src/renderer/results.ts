@@ -8,6 +8,7 @@
 const root = document.querySelector("#root") as HTMLElement;
 let activeInvestigation = "";
 let followUpBusy = false;
+let mount: HTMLElement = root;
 
 function appHeader(status: RendererStatus): HTMLElement {
   const header = el("header", "app-header");
@@ -90,6 +91,34 @@ function codeBlock(code: string): HTMLElement {
   return pre;
 }
 
+function fixedLines(diff: string): string {
+  const added = diff.split("\n")
+    .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
+    .map((line) => line.slice(1))
+    .join("\n")
+    .trim();
+  return added || diff.trim();
+}
+
+function copyBox(code: string): HTMLElement {
+  const box = el("div", "copy-box");
+  const bar = el("div", "copy-bar");
+  bar.appendChild(el("span", "copy-label", "Fixed lines"));
+  const button = el("button", "copy-btn", "Copy") as HTMLButtonElement;
+  button.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(code);
+      button.textContent = "Copied";
+      setTimeout(() => { button.textContent = "Copy"; }, 1400);
+    } catch {
+      button.textContent = "Select and copy";
+    }
+  });
+  bar.appendChild(button);
+  box.append(bar, codeBlock(code));
+  return box;
+}
+
 function findingCard(f: RendererFinding): HTMLElement {
   const card = el("div", "card");
   card.setAttribute("data-finding", f.verified ? "verified" : "hypothesis");
@@ -153,7 +182,7 @@ function bulletList(items: string[], cls = ""): HTMLElement {
 function banner(text: string, kind: "error" | "info"): void {
   const b = el("div", `banner ${kind}`, text);
   b.setAttribute("data-section", "banner");
-  root.appendChild(b);
+  mount.appendChild(b);
 }
 
 function followUpBox(parentId: string): void {
@@ -195,21 +224,28 @@ function followUpBox(parentId: string): void {
 function h1(t: string): void {
   const h = el("h1", "", t);
   h.setAttribute("data-section", t);
-  root.appendChild(h);
+  mount.appendChild(h);
 }
 
 function h2(t: string): void {
-  root.appendChild(el("h2", "", t));
+  mount.appendChild(el("h2", "", t));
 }
 
 function para(t: string, cls = ""): void {
-  root.appendChild(el("p", cls, t || "(none)"));
+  mount.appendChild(el("p", cls, t || "(none)"));
+}
+
+function shortText(text: string, max = 280): string {
+  const clean = text.replace(/\s+/g, " ").trim();
+  if (clean.length <= max) return clean;
+  return `${clean.slice(0, max).replace(/\s+\S*$/, "")}…`;
 }
 
 function render(status: RendererStatus): void {
   activeInvestigation = status.investigation_id || activeInvestigation;
   if (status.status !== "running") followUpBusy = false;
   root.innerHTML = "";
+  mount = root;
   root.appendChild(appHeader(status));
   root.appendChild(historyBar());
   if (status.status === "cancelled") {
@@ -225,55 +261,49 @@ function render(status: RendererStatus): void {
     return;
   }
   const r = status.report;
+  const verified = r.findings.filter((f) => f.verified);
+  const hypo = r.findings.filter((f) => !f.verified);
+  const fix = r.recommended_fix;
+  h1("Quick answer");
+  mount.appendChild(el("p", `badge ${r.confidence}`, `confidence: ${r.confidence}`));
+  para(shortText(r.root_cause || r.summary || "Trace could not identify the cause."));
+  if (verified.length) para(verified.map((f) => locationLabel(f)).join(" · "), "quick-location");
+
+  h1("Fix");
+  if (fix?.description) para(shortText(fix.description));
+  if (fix?.diff) {
+    mount.appendChild(copyBox(fixedLines(fix.diff)));
+    if (fix.diff_verified === false) mount.appendChild(el("p", "note warn", "Review these lines against the current file before applying."));
+  } else para("No fixed lines were proposed yet.", "muted");
+
+  const details = document.createElement("details");
+  details.className = "details";
+  details.appendChild(el("summary", "details-summary", "Show full investigation details"));
+  const detailBody = el("div", "details-body");
+  details.appendChild(detailBody);
+  root.appendChild(details);
+  mount = detailBody;
+
   h1("Diagnosis");
-  const badge = el("p", `badge ${r.confidence}`, `confidence: ${r.confidence}`);
-  root.appendChild(badge);
   para(r.summary || "No summary provided.");
   h2("Most likely root cause");
   para(r.root_cause || "Unknown.");
-  if (r.confidence_rationale) {
-    h2("Why — evidence");
-    para(r.confidence_rationale);
-  }
-
+  if (r.confidence_rationale) { h2("Why — evidence"); para(r.confidence_rationale); }
   h1("Exact source locations");
-  const verified = r.findings.filter((f) => f.verified);
-  const hypo = r.findings.filter((f) => !f.verified);
-  if (verified.length) verified.forEach((f) => root.appendChild(findingCard(f)));
+  if (verified.length) verified.forEach((f) => mount.appendChild(findingCard(f)));
   else para("No verified source locations. The evidence was not sufficient to pin the bug to a file and line.", "muted");
-  if (hypo.length) {
-    h2("Unverified hypotheses — not confirmed");
-    hypo.forEach((f) => root.appendChild(findingCard(f)));
-  }
-
+  if (hypo.length) { h2("Unverified hypotheses — not confirmed"); hypo.forEach((f) => mount.appendChild(findingCard(f))); }
   h1("Proposed solution");
-  const fix = r.recommended_fix;
   if (fix?.description) para(fix.description);
   else para("No fix proposed — the evidence does not support one yet.", "muted");
-  if (fix?.diff) {
-    h2("Proposed patch (review before applying — Trace never edits files)");
-    root.appendChild(codeBlock(fix.diff));
-    if (fix.diff_verified === false) {
-      root.appendChild(el("p", "note warn",
-        "This patch could not be verified against the current files and may not apply cleanly."));
-    }
-  }
+  if (fix?.diff) { h2("Proposed patch"); mount.appendChild(codeBlock(fix.diff)); }
   if (fix?.rationale) para(fix.rationale);
-  if (r.alternative_hypotheses?.length) {
-    h2("Alternative hypotheses");
-    root.appendChild(bulletList(r.alternative_hypotheses));
-  }
-
+  if (r.alternative_hypotheses?.length) { h2("Alternative hypotheses"); mount.appendChild(bulletList(r.alternative_hypotheses)); }
   h1("Investigation evidence");
   if (r.evidence_summary) para(r.evidence_summary);
-  if (r.needs_more_info?.length) {
-    h2("Missing information");
-    root.appendChild(bulletList(r.needs_more_info));
-  }
-  if (r.warnings?.length) {
-    h2("Warnings");
-    root.appendChild(bulletList(r.warnings, "warn-item"));
-  }
+  if (r.needs_more_info?.length) { h2("Missing information"); mount.appendChild(bulletList(r.needs_more_info)); }
+  if (r.warnings?.length) { h2("Warnings"); mount.appendChild(bulletList(r.warnings, "warn-item")); }
+  mount = root;
   if (activeInvestigation) followUpBox(activeInvestigation);
 }
 
