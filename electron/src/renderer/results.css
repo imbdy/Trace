@@ -3,16 +3,23 @@
    locations / Proposed solution / Investigation evidence); only the skin
    changed to match the creature. */
 :root {
-  --bg: #101216; --panel: #17181c; --fg: #e9ecf1; --muted: rgba(233, 236, 241, 0.6);
-  --faint: rgba(233, 236, 241, 0.38); --accent: #9db9ff; --green: #6fce95;
-  --amber: #e0c05b; --red: #ff8a8a; --code: #0b0b0f; --line: rgba(233, 236, 241, 0.12);
+  --bg: #0b0d11; --panel: #151922; --panel-2: #1a1f2b; --fg: #f0f3f8; --muted: rgba(240, 243, 248, 0.62);
+  --faint: rgba(240, 243, 248, 0.38); --accent: #9db9ff; --accent-2: #c6d5ff; --green: #6fce95;
+  --amber: #e0c05b; --red: #ff8a8a; --code: #080a0e; --line: rgba(240, 243, 248, 0.11);
 }
 html, body {
-  margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+  margin: 0; padding: 0; background: radial-gradient(circle at 85% -10%, #1e2940 0, transparent 38%), var(--bg); color: var(--fg);
   font-family: "Segoe UI", system-ui, sans-serif; font-size: 14px; line-height: 1.55;
 }
-#root { max-width: 860px; margin: 0 auto; padding: 8px 20px 48px; }
-h1 { color: var(--fg); font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; margin: 26px 0 8px; }
+#root { max-width: 900px; margin: 0 auto; padding: 22px 28px 60px; }
+.app-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.brand { display: flex; align-items: center; gap: 9px; }
+.brand-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 9px; background: linear-gradient(135deg, var(--accent), #687dcb); color: #0b0d11; font-size: 16px; box-shadow: 0 6px 22px rgba(157,185,255,.22); }
+.brand-name { font-weight: 750; font-size: 17px; letter-spacing: -.02em; }
+.state-pill { border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px; color: var(--muted); font-size: 12px; }
+.state-pill.done { color: var(--green); border-color: rgba(111,206,149,.28); }
+.state-pill.error { color: var(--red); border-color: rgba(255,138,138,.3); }
+h1 { color: var(--accent-2); font-size: 12px; text-transform: uppercase; letter-spacing: 0.12em; margin: 30px 0 10px; }
 h2 { font-size: 15px; margin: 18px 0 6px; }
 p, li { overflow-wrap: anywhere; }
 .muted { color: var(--muted); }
@@ -21,14 +28,14 @@ p, li { overflow-wrap: anywhere; }
 .badge.high { color: var(--green); } .badge.medium { color: var(--amber); }
 .badge.low { color: var(--muted); }
 .banner {
-  border: 1px solid var(--amber); border-radius: 12px;
-  background: var(--panel); padding: 14px 16px; margin: 20px 0; font-size: 15px;
+  border: 1px solid var(--amber); border-radius: 14px;
+  background: var(--panel); padding: 16px 18px; margin: 20px 0; font-size: 15px; box-shadow: 0 12px 35px rgba(0,0,0,.18);
 }
 .banner.error { border-color: var(--red); color: var(--red); }
 .banner.info { border-color: var(--amber); color: var(--amber); }
 .card {
   background: var(--panel); border: 1px solid var(--line);
-  border-radius: 12px; padding: 12px 16px; margin: 10px 0;
+  border-radius: 14px; padding: 15px 18px; margin: 10px 0; box-shadow: 0 10px 26px rgba(0,0,0,.13);
 }
 .card .top { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
 .card .title { font-weight: 700; font-size: 15px; }
@@ -67,7 +74,7 @@ p, .card, li { -webkit-user-select: text; user-select: text; }
 .follow-note { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
 .follow-note.error { color: var(--red); }
 .gitctx { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
-.history-bar { margin: 8px 0 22px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(233,236,241,.03); }
+.history-bar { margin: 8px 0 28px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: rgba(233,236,241,.04); }
 .history-head { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 .history-title { color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
 .history-search { width: 150px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--code); color: var(--fg); }

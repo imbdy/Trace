@@ -32,10 +32,15 @@ export class BackendManager {
   spawn(fromDir: string): void {
     if (this.proc) return;
     const root = repoRoot(fromDir);
-    const python = process.env.TRACE_PYTHON || "python";
-    const args = [path.join(root, "main.py"), "--backend-only", "--port", String(this.port)];
-    this.proc = spawn(python, args, {
-      cwd: root,
+    const resources = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+    const packaged = resources ? path.join(resources, "backend", "trace-backend.exe") : "";
+    const executable = packaged && require("fs").existsSync(packaged)
+      ? packaged : (process.env.TRACE_PYTHON || "python");
+    const args = executable === packaged
+      ? ["--port", String(this.port)]
+      : [path.join(root, "main.py"), "--backend-only", "--port", String(this.port)];
+    this.proc = spawn(executable, args, {
+      cwd: executable === packaged ? path.dirname(executable) : root,
       stdio: ["ignore", "ignore", "pipe"],
       windowsHide: true,
     });

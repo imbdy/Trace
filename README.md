@@ -121,6 +121,25 @@ curl -N http://127.0.0.1:3777/api/v1/investigations/inv-.../events  # SSE
 - `open-file` line navigation depends on OS/editor integration (best-effort).
 - Language diagnostics depend on tools installed on the machine.
 
+## Desktop releases
+
+Windows installers are published from tags such as `v0.2.0` at
+[github.com/imbdy/Trace/releases](https://github.com/imbdy/Trace/releases).
+The installer includes the loopback backend, so Python is not required on the
+user's machine. Installed copies check GitHub Releases in the background and
+download updates automatically; the update is applied when Trace restarts.
+
+To publish a release after changing the Electron version in
+`electron/package.json`:
+
+```powershell
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The GitHub Actions workflow builds the backend, creates the Windows NSIS
+installer, and publishes the release assets.
+
 ## Tests
 
 ```powershell

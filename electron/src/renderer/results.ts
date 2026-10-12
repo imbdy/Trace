@@ -9,6 +9,15 @@ const root = document.querySelector("#root") as HTMLElement;
 let activeInvestigation = "";
 let followUpBusy = false;
 
+function appHeader(status: RendererStatus): HTMLElement {
+  const header = el("header", "app-header");
+  const brand = el("div", "brand");
+  brand.append(el("span", "brand-mark", "✦"), el("span", "brand-name", "Trace"));
+  const state = status.status === "done" ? "Ready" : status.status === "running" ? "Working" : "Needs attention";
+  header.append(brand, el("span", `state-pill ${status.status}`, state));
+  return header;
+}
+
 function historyBar(): HTMLElement {
   const bar = el("section", "history-bar");
   const head = el("div", "history-head");
@@ -201,6 +210,7 @@ function render(status: RendererStatus): void {
   activeInvestigation = status.investigation_id || activeInvestigation;
   if (status.status !== "running") followUpBusy = false;
   root.innerHTML = "";
+  root.appendChild(appHeader(status));
   root.appendChild(historyBar());
   if (status.status === "cancelled") {
     banner("Investigation cancelled — no results. Submit a new request when ready.", "info");
