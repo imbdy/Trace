@@ -54,27 +54,27 @@
   // working body motion while changing only the eyes, brows, and mouth.
   // Every entry is deliberately small enough to read at Trace's 48px face.
   const EXPRESSIONS = {
-    idle: { base: 'idle', eye: 'pill', brow: 'neutral', mouth: 'neutral', gaze: [0, 0] },
-    working: { base: 'working', eye: 'pill', brow: 'soft', mouth: 'flat', gaze: [0, 0] },
+    idle: { base: 'idle', eye: 'dot', brow: 'none', mouth: 'none', gaze: [0, 0] },
+    working: { base: 'working', eye: 'dot', brow: 'none', mouth: 'none', gaze: [0, 0] },
     listening: { base: 'listening', eye: 'wide', brow: 'soft', mouth: 'small', gaze: [0, 0] },
     curious: { base: 'idle', eye: 'wide', brow: 'raised', mouth: 'small', gaze: [0.16, 0.08] },
     happy: { base: 'idle', eye: 'happy', brow: 'soft', mouth: 'smile', blush: 0.18, gaze: [0, 0] },
     excited: { base: 'success', eye: 'wide', brow: 'raised', mouth: 'smile', blush: 0.3, gaze: [0, 0.08] },
     skeptical: { base: 'idle', eye: 'flat', brow: 'skeptic', mouth: 'flat', gaze: [-0.12, 0] },
     confused: { base: 'idle', eye: 'pill', brow: 'uneven', mouth: 'uncertain', gaze: [0.12, -0.03] },
-    focused: { base: 'working', eye: 'line', brow: 'focused', mouth: 'flat', gaze: [0, 0.06] },
+    focused: { base: 'working', eye: 'dot', brow: 'focused', mouth: 'none', gaze: [0, 0.06] },
     sleepy: { base: 'sleeping', eye: 'closed', brow: 'soft', mouth: 'small', gaze: [0, -0.12] },
     thinking: { base: 'thinking', eye: 'pill', brow: 'raised', mouth: 'small', gaze: [0.48, 0.38] },
-    investigating: { base: 'working', eye: 'line', brow: 'focused', mouth: 'flat', gaze: [0, 0.04] },
-    reading: { base: 'working', eye: 'pill', brow: 'soft', mouth: 'flat', gaze: [-0.2, 0.06] },
-    writing: { base: 'working', eye: 'pill', brow: 'focused', mouth: 'determined', gaze: [0, 0.08] },
+    investigating: { base: 'working', eye: 'dot', brow: 'focused', mouth: 'none', gaze: [0, 0.04] },
+    reading: { base: 'working', eye: 'dot', brow: 'none', mouth: 'none', gaze: [-0.2, 0.06] },
+    writing: { base: 'working', eye: 'dot', brow: 'focused', mouth: 'none', gaze: [0, 0.08] },
     waiting: { base: 'listening', eye: 'wide', brow: 'soft', mouth: 'small', gaze: [0, 0] },
-    verifying: { base: 'working', eye: 'line', brow: 'focused', mouth: 'small', gaze: [0, 0.08] },
+    verifying: { base: 'working', eye: 'dot', brow: 'focused', mouth: 'none', gaze: [0, 0.08] },
     success: { base: 'success', eye: 'happy', brow: 'soft', mouth: 'smile', blush: 0.22, gaze: [0, 0] },
     warning: { base: 'listening', eye: 'wide', brow: 'concerned', mouth: 'concerned', gaze: [0, 0.02] },
     error: { base: 'error', eye: 'flat', brow: 'concerned', mouth: 'frown', gaze: [0, -0.02] },
-    backend_unavailable: { base: 'error', eye: 'flat', brow: 'skeptic', mouth: 'flat', gaze: [-0.14, 0] },
-    cancelled: { base: 'idle', eye: 'closed', brow: 'soft', mouth: 'flat', gaze: [0, 0] },
+    backend_unavailable: { base: 'error', eye: 'flat', brow: 'none', mouth: 'frown', gaze: [-0.14, 0] },
+    cancelled: { base: 'idle', eye: 'closed', brow: 'none', mouth: 'none', gaze: [0, 0] },
   };
   const EXPRESSION_NAMES = Object.keys(EXPRESSIONS);
 
@@ -190,7 +190,7 @@
   }
 
   function blink() {
-    if (C.locks.has('open')) return;
+    if (C.reduced || C.locks.has('open')) return;
     anim('open', [[0.06, 70, Ease.inOut], [1, 130, Ease.out]]);
   }
   function blinkSoon() {
@@ -386,7 +386,7 @@
   }
 
   function drawBrows(ctx, R, rx, ry, brow) {
-    if (brow === 'neutral' || brow === 'soft') return;
+    if (brow === 'none' || brow === 'neutral' || brow === 'soft') return;
     const y = -ry * 0.43;
     ctx.save();
     ctx.strokeStyle = INK;
@@ -403,13 +403,17 @@
       ctx.save();
       ctx.translate(sd * rx * 0.34, y + lift);
       ctx.rotate(tilt);
-      ctx.beginPath(); ctx.moveTo(-R * 0.11, 0); ctx.lineTo(R * 0.11, 0); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(-R * 0.11, R * 0.015);
+      ctx.quadraticCurveTo(0, -R * 0.045, R * 0.11, R * 0.015);
+      ctx.stroke();
       ctx.restore();
     }
     ctx.restore();
   }
 
   function drawMouth(ctx, R, ry, mouth) {
+    if (mouth === 'none' || mouth === 'neutral') return;
     const y = ry * 0.39;
     ctx.save();
     ctx.strokeStyle = INK;
