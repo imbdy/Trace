@@ -82,6 +82,10 @@ class Finding:
     evidence: str = ""
     confidence: str = "low"  # low | medium | high
     verified: bool = False
+    # Grounded version-control context ("last changed in commit …"), populated
+    # by the engine for verified findings only; empty when git is unavailable,
+    # the dir is not a repo, or the location could not be verified.
+    git_context: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -92,6 +96,10 @@ class RecommendedFix:
     description: str
     diff: str | None = None
     rationale: str = ""
+    # True only when every hunk of ``diff`` was checked against the real file
+    # on disk (validator.verify_fix_diff). False — the safe default — means the
+    # patch is shown as-is and must not be trusted as applicable.
+    diff_verified: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)

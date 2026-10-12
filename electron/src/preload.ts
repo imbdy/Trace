@@ -7,6 +7,7 @@ export interface TraceBridge {
   resize: (w: number, h: number) => void;
   hide: () => void;
   submit: (text: string, opts?: Record<string, unknown>) => Promise<{ ok: boolean; id?: string; reason?: string }>;
+  followUp: (parentId: string, text: string) => Promise<{ ok: boolean; reason?: string }>;
   cancel: () => Promise<{ ok: boolean }>;
   showResults: () => Promise<{ ok: boolean }>;
   current: () => Promise<{ id: string | null }>;
@@ -23,6 +24,7 @@ const api: TraceBridge = {
   resize: (w, h) => ipcRenderer.send("trace:resize", w, h),
   hide: () => ipcRenderer.send("trace:hide"),
   submit: (text, opts) => ipcRenderer.invoke("trace:submit", text, opts ?? {}),
+  followUp: (parentId, text) => ipcRenderer.invoke("trace:follow-up", parentId, text),
   cancel: () => ipcRenderer.invoke("trace:cancel"),
   showResults: () => ipcRenderer.invoke("trace:show-results"),
   current: () => ipcRenderer.invoke("trace:current"),

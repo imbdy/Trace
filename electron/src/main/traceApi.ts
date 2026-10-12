@@ -73,6 +73,16 @@ export class TraceApi {
     throw new ApiError("bad_response", "Backend did not return an investigation id.");
   }
 
+  async followUp(parentId: string, requestText: string): Promise<string> {
+    const { status, payload } = await this.request(
+      "POST", `/investigations/${encodeURIComponent(parentId)}/follow-up`,
+      { request_text: requestText },
+    );
+    const id = typeof payload.investigation_id === "string" ? payload.investigation_id : "";
+    if ((status === 200 || status === 202) && id) return id;
+    throw new ApiError("bad_response", "Backend did not return a follow-up id.");
+  }
+
   async getStatus(id: string): Promise<InvestigationStatus> {
     const { payload } = await this.request("GET", `/investigations/${id}`);
     return payload as unknown as InvestigationStatus;

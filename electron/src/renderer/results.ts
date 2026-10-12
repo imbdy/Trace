@@ -6,6 +6,8 @@
 // RendererStatus are renderer-owned structural copies of the contract.
 
 const root = document.querySelector("#root") as HTMLElement;
+let activeInvestigation = "";
+let followUpBusy = false;
 
 function el(tag: string, cls: string, text?: string): HTMLElement {
   const n = document.createElement(tag);
@@ -83,6 +85,7 @@ function findingCard(f: RendererFinding): HTMLElement {
     card.appendChild(el("p", "evlabel", "Evidence:"));
     card.appendChild(el("p", "", f.evidence));
   }
+  if (f.git_context) card.appendChild(el("p", "gitctx", f.git_context));
   return card;
 }
 
@@ -115,6 +118,42 @@ function banner(text: string, kind: "error" | "info"): void {
   root.appendChild(b);
 }
 
+function followUpBox(parentId: string): void {
+  const section = el("section", "follow-up");
+  section.appendChild(el("h2", "", "Keep exploring"));
+  section.appendChild(el("p", "muted", "Ask Trace about this diagnosis or a possible fix."));
+  const row = el("div", "follow-row");
+  const input = el("textarea", "follow-input") as HTMLTextAreaElement;
+  input.rows = 2;
+  input.maxLength = 8000;
+  input.placeholder = "What should we check next?";
+  const send = el("button", "follow-send", "Ask") as HTMLButtonElement;
+  const note = el("p", "follow-note", "");
+  const submit = async (): Promise<void> => {
+    const text = input.value.trim();
+    if (!text || followUpBusy) return;
+    followUpBusy = true;
+    input.disabled = true; send.disabled = true;
+    note.textContent = "Thinking about your question…";
+    note.className = "follow-note";
+    try {
+      const result = await window.trace.followUp(parentId, text);
+      if (!result.ok) throw new Error(result.reason === "busy" ? "Trace is already working." : "Could not start the follow-up.");
+      input.value = "";
+      note.textContent = "Follow-up started. Your answer will appear here when ready.";
+    } catch (e) {
+      note.textContent = (e as Error).message;
+      note.className = "follow-note error";
+      input.disabled = false; send.disabled = false; followUpBusy = false;
+    }
+  };
+  send.addEventListener("click", () => void submit());
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submit(); }
+  });
+  row.append(input, send); section.append(row, note); root.appendChild(section);
+}
+
 function h1(t: string): void {
   const h = el("h1", "", t);
   h.setAttribute("data-section", t);
@@ -130,6 +169,8 @@ function para(t: string, cls = ""): void {
 }
 
 function render(status: RendererStatus): void {
+  activeInvestigation = status.investigation_id || activeInvestigation;
+  if (status.status !== "running") followUpBusy = false;
   root.innerHTML = "";
   if (status.status === "cancelled") {
     banner("Investigation cancelled — no results. Submit a new request when ready.", "info");
@@ -172,6 +213,10 @@ function render(status: RendererStatus): void {
   if (fix?.diff) {
     h2("Proposed patch (review before applying — Trace never edits files)");
     root.appendChild(codeBlock(fix.diff));
+    if (fix.diff_verified === false) {
+      root.appendChild(el("p", "note warn",
+        "This patch could not be verified against the current files and may not apply cleanly."));
+    }
   }
   if (fix?.rationale) para(fix.rationale);
   if (r.alternative_hypotheses?.length) {
@@ -189,6 +234,7 @@ function render(status: RendererStatus): void {
     h2("Warnings");
     root.appendChild(bulletList(r.warnings, "warn-item"));
   }
+  if (activeInvestigation) followUpBox(activeInvestigation);
 }
 
 window.trace.onReport((status) => {

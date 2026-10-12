@@ -112,7 +112,7 @@ class TestLayering(unittest.TestCase):
             allow_abs={"trace_backend"},
             allow_rel={"config", "context_collector", "ollama_client",
                        "project_inspector", "schemas", "screenshot_service",
-                       "validator"},
+                       "validator", "git_context"},
             forbid_rel={"server", "history"},
             message="L2 orchestrator must not depend on HTTP hosting"))
 

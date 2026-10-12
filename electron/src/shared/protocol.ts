@@ -30,12 +30,14 @@ export interface Finding {
   evidence: string;
   confidence: string;
   verified: boolean;
+  git_context?: string;
 }
 
 export interface RecommendedFix {
   description: string;
   diff?: string | null;
   rationale?: string;
+  diff_verified?: boolean;
 }
 
 export interface InvestigationReport {
@@ -73,7 +75,7 @@ export const STAGE_LABELS: Record<string, [string, string]> = {
   error_extract: ["Analyzing the error", "Extracting error and stack trace"],
   read_files: ["Inspecting the project", "Reading relevant source files"],
   diagnostics: ["Inspecting the project", "Collecting compiler and linter diagnostics"],
-  model_analysis: ["Analyzing the error", "Asking the model to analyze the evidence"],
+  model_analysis: ["Analyzing the error", "Thinking through the evidence"],
   validate: ["Verifying file references", "Verifying paths and line numbers"],
   report: ["Preparing the explanation", "Preparing the explanation"],
 };

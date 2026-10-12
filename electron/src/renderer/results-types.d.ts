@@ -5,8 +5,14 @@ interface RendererFinding {
   title: string; file_path: string; start_line: number; end_line: number;
   code_excerpt: string; explanation: string; evidence: string;
   confidence: string; verified: boolean;
+  git_context?: string;
 }
-interface RendererFix { description: string; diff?: string | null; rationale?: string }
+interface RendererFix {
+  description: string;
+  diff?: string | null;
+  rationale?: string;
+  diff_verified?: boolean;
+}
 interface RendererReport {
   summary: string; root_cause: string; confidence: string;
   confidence_rationale: string; findings: RendererFinding[];
@@ -23,6 +29,7 @@ interface RendererStatus {
 }
 interface TraceWindowBridge {
   openFile: (path: string, line?: number) => Promise<Record<string, unknown>>;
+  followUp: (parentId: string, text: string) => Promise<{ ok: boolean; reason?: string }>;
   onReport: (cb: (status: unknown) => void) => void;
 }
 interface Window { trace: TraceWindowBridge }
