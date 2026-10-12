@@ -1,11 +1,15 @@
 {
   "name": "trace-desktop",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
+  "author": "imbdy",
   "description": "Trace independent debugging companion (Electron frontend, Python backend)",
   "main": "dist/main/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-assets.js",
+    "build:backend": "powershell -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
+    "dist:win": "npm run build && electron-builder --win nsis",
+    "dist:win:publish": "npm run build && electron-builder --win nsis --publish always",
     "start": "electron .",
     "smoke": "electron . --smoke",
     "test": "node --test test/placement.test.js test/settings.test.js"
@@ -13,14 +17,47 @@
   "devDependencies": {
     "@types/node": "^22.10.0",
     "electron": "^38.0.0",
+    "electron-builder": "^26.0.12",
     "typescript": "^5.6.0"
   },
   "build": {
     "appId": "Trace.Trace",
     "productName": "Trace",
-    "win": { "icon": "../../assets/icons/trace.ico" },
-    "mac": { "icon": "../../assets/icons/trace.png" },
-    "linux": { "icon": "../../assets/icons/trace.png" },
-    "extraResources": [{ "from": "../../assets/icons", "to": "assets/icons" }]
+    "artifactName": "Trace-Setup-${version}.${ext}",
+    "publish": {
+      "provider": "github",
+      "owner": "imbdy",
+      "repo": "Trace",
+      "releaseType": "release"
+    },
+    "win": {
+      "icon": "../assets/icons/trace.ico"
+    },
+    "mac": {
+      "icon": "../assets/icons/trace.png"
+    },
+    "linux": {
+      "icon": "../assets/icons/trace.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Trace"
+    },
+    "files": ["dist/**/*", "package.json", "package-lock.json"],
+    "extraResources": [
+      {
+        "from": "../assets/icons",
+        "to": "assets/icons"
+      },
+      {
+        "from": "resources/backend/trace-backend.exe",
+        "to": "backend/trace-backend.exe"
+      }
+    ]
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.2"
   }
 }

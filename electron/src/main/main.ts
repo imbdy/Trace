@@ -9,6 +9,7 @@
 // backend, runs investigations through it, and owns the results window.
 // Renderer processes stay dumb; all backend I/O lives here in main.
 import { app, BrowserWindow, ipcMain, screen, shell, Notification, Tray, Menu, nativeImage } from "electron";
+import { autoUpdater } from "electron-updater";
 import * as path from "path";
 
 // placement.js / settings.js are Neo's, kept verbatim as dependency-free JS
@@ -282,6 +283,21 @@ function notifyDone(title: string, body: string): void {
   }
 }
 
+let updateReady = false;
+function setupAutoUpdates(): void {
+  if (!app.isPackaged || SMOKE) return;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.on("update-available", () => {
+    notifyDone("Trace is updating", "A new version is downloading in the background.");
+  });
+  autoUpdater.on("update-downloaded", () => {
+    updateReady = true;
+    notifyDone("Trace is ready to restart", "The update will be installed the next time Trace starts.");
+  });
+  setTimeout(() => { void autoUpdater.checkForUpdates().catch(() => undefined); }, 7000);
+}
+
 function emitStage(ev: { investigation_id?: string; stage: string; message: string; progress: number }): void {
   try {
     charWin?.webContents.send("trace:stage", ev);
@@ -407,6 +423,7 @@ function buildTray(): void {
         { type: "separator" },
         { label: "Show Trace", click: () => { try { charWin && charWin.show(); } catch { /* ignore */ } } },
         { label: "Open results", click: () => showResults() },
+        { label: "Check for updates", enabled: app.isPackaged, click: () => { void autoUpdater.checkForUpdates().catch(() => undefined); } },
         { type: "separator" },
         { label: "Hush 10 min", click: () => setCfg(settings.pauseMinutes(cfg, 10, Date.now())) },
         { label: "Resume now", click: () => setCfg(settings.resume(cfg)) },
@@ -732,6 +749,7 @@ async function startup(): Promise<void> {
   charWin = createCharacter();
   resultsWin = createResults();
   buildTray();
+  setupAutoUpdates();
   charWin.once("ready-to-show", () => {
     try {
       charWin?.setAlwaysOnTop(true, "screen-saver");
@@ -792,6 +810,7 @@ app.on("window-all-closed", (...args: unknown[]) => {
 app.on("before-quit", () => {
   try {
     if (run) run.abort.abort();
+    if (updateReady) autoUpdater.quitAndInstall();
   } catch {
     /* ignore */
   }
