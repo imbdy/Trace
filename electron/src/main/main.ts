@@ -527,6 +527,20 @@ function setupIpc(): void {
 
   ipcMain.handle("trace:current", async () => ({ id: run ? run.id : null }));
 
+  ipcMain.handle("trace:history", async (_e, query: string) => {
+    try { return await api.history(50, typeof query === "string" ? query : ""); }
+    catch { return []; }
+  });
+
+  ipcMain.handle("trace:show-history", async (_e, id: string) => {
+    if (typeof id !== "string" || !id.trim()) return { ok: false as const, reason: "missing_id" };
+    try {
+      const st = await api.getStatus(id.trim());
+      lastStatus = st;
+      return { ok: showResults(st) };
+    } catch { return { ok: false as const, reason: "not_found" }; }
+  });
+
   ipcMain.handle("trace:open-file", async (_e, filePath: string, line?: number) => {
     try {
       return await api.openFile(String(filePath), typeof line === "number" ? line : undefined);

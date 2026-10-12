@@ -88,6 +88,14 @@ export class TraceApi {
     return payload as unknown as InvestigationStatus;
   }
 
+  async history(limit = 50, query = ""): Promise<Record<string, unknown>[]> {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (query.trim()) params.set("q", query.trim());
+    const { payload } = await this.request("GET", `/investigations?${params}`);
+    return Array.isArray(payload.investigations)
+      ? payload.investigations as Record<string, unknown>[] : [];
+  }
+
   async cancel(id: string): Promise<Record<string, unknown>> {
     const { payload } = await this.request("POST", `/investigations/${id}/cancel`);
     return payload;

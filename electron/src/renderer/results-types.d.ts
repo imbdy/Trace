@@ -30,6 +30,8 @@ interface RendererStatus {
 interface TraceWindowBridge {
   openFile: (path: string, line?: number) => Promise<Record<string, unknown>>;
   followUp: (parentId: string, text: string) => Promise<{ ok: boolean; reason?: string }>;
+  history: (query?: string) => Promise<Record<string, unknown>[]>;
+  showHistory: (id: string) => Promise<{ ok: boolean; reason?: string }>;
   onReport: (cb: (status: unknown) => void) => void;
 }
 interface Window { trace: TraceWindowBridge }
