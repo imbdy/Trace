@@ -83,6 +83,8 @@ ollama pull gemma4:31b-cloud
 | `TRACE_BIND_HOST` | `127.0.0.1` | Must stay loopback |
 | `TRACE_BIND_PORT` | `3777` | Local port |
 | `TRACE_CONNECT_TIMEOUT_S` / `TRACE_READ_TIMEOUT_S` | `5` / `120` | Timeouts |
+| `TRACE_ALLOW_FILE_EDITS` | `1` | `0` disables all auto-fix / apply-fix writes |
+| `TRACE_ALLOW_TESTS` | `0` | `1` opts in to allowlisted test-runner output |
 
 ## Run the backend
 
@@ -111,7 +113,9 @@ curl -N http://127.0.0.1:3777/api/v1/investigations/inv-.../events  # SSE
 - Clipboard read only when `include_clipboard: true`.
 - Screenshots live in memory + one temp file, deleted after analysis (`dispose()` / `temporary_capture()`); never retained.
 - Excluded from scanning: `.git`, `node_modules`, `__pycache__`, `.venv`/`venv`, `build`/`dist`/`target`, caches, secrets.
-- Diagnostics run only allowlisted installed tools (`py_compile`, `ruff`, `mypy`, `tsc`, `eslint`, `cargo check`, `go vet`, `dotnet build`) with timeouts. Project scripts are never executed. Source files are never modified.
+- Diagnostics run only allowlisted installed tools (`py_compile`, `ruff`, `mypy`, `tsc`, `eslint`, `cargo check`, `go vet`, `dotnet build`) with timeouts. Project scripts are never executed.
+- Safe auto-fix: ask with `auto_fix: true` (or tick "Fix it for me") and Trace applies the VERIFIED patch straight to the file — with a `*.trace-bak` backup per file — instead of popping a results window. Unverified patches are never written (review-only + `Apply fix` button stays disabled). Disable all edits with `TRACE_ALLOW_FILE_EDITS=0`.
+- Code intelligence: symbol search, file outlines (AST for Python), complexity notes, and opt-in test output (`run_tests: true` + `TRACE_ALLOW_TESTS=1`, allowlisted runners only) feed the model real definitions instead of guesses.
 
 ## Limitations
 

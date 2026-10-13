@@ -20,7 +20,9 @@ Request (`InvestigationRequest`):
   "editor_selection": "... (optional)",
   "terminal_output": "... (optional, tail kept)",
   "extra_context": "... (optional)",
-  "follow_up_of": "inv-abc123 (optional; see POST .../follow-up)"
+  "follow_up_of": "inv-abc123 (optional; see POST .../follow-up)",
+  "auto_fix": false,
+  "run_tests": false
 }
 ```
 
@@ -29,6 +31,14 @@ Request (`InvestigationRequest`):
 - `follow_up_of` is normally set for you by the follow-up endpoint; when set,
   the engine answers a question about that investigation instead of
   re-collecting evidence from scratch.
+- `auto_fix=true`: "what's wrong, then go fix it" — the engine applies the
+  VERIFIED fix diff straight to the files (with `*.trace-bak` backups) and
+  reports it in `report.fix_applied`. Unverified diffs are never written.
+  The desktop UI then stays quiet (no results window) and just says "fixed".
+  Disabled server-wide with `TRACE_ALLOW_FILE_EDITS=0`.
+- `run_tests=true`: include the project's allowlisted test output as evidence.
+  Execution is opt-in server-wide (`TRACE_ALLOW_TESTS=1`); project scripts are
+  never executed.
 
 Response: `{"investigation_id": "inv-abc123"}`.
 
@@ -84,7 +94,9 @@ Report (`InvestigationReport`):
 ```
 
 `follow_up_of` is `""` for a first-pass report and the parent investigation id
-for a follow-up (see below).
+for a follow-up (see below). `fix_applied` is `null` unless `auto_fix` was
+requested: `{"applied": true, "applied_files": [...], "backup_paths": [...],
+"warnings": [...], "dry_run": false}`.
 
 Rules the frontend can rely on:
 - Every `findings[].verified=true` location exists on disk with valid lines
@@ -154,6 +166,23 @@ Keepalive comments (`: keepalive`) every ~25s.
 ## POST /api/v1/investigations/{id}/cancel → 200
 
 Cancels a running investigation. 404 unknown id; 409 already finished.
+
+## POST /api/v1/investigations/{id}/apply-fix → 200
+
+Applies the completed report's VERIFIED fix diff to disk (the "go fix that
+file" button). Request: `{"dry_run": false}`. Response on success:
+
+```json
+{"ok": true, "applied": true, "applied_files": ["app.py"],
+ "backup_paths": [".../app.py.trace-bak"], "warnings": []}
+```
+
+- 404 when there is no completed report; 409 when the run is still going,
+  when no diff was proposed, or when the diff cannot be verified against the
+  current files (re-run the investigation instead of force-applying).
+- 403 when file edits are disabled (`TRACE_ALLOW_FILE_EDITS=0`).
+- Every overwritten file keeps a `*.trace-bak` backup; `dry_run: true`
+  verifies without writing.
 
 ## POST /api/v1/open-file → 200
 

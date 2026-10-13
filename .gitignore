@@ -5,3 +5,5 @@ __pycache__/
 electron/dist/
 electron/node_modules/
 electron/resources/backend/
+*.trace-bak
+*.trace-tmp
