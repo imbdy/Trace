@@ -30,6 +30,16 @@ class InvestigationRequest:
     # named here: the engine reuses that report as context instead of
     # re-collecting evidence.
     follow_up_of: str | None = None
+    # When True, the engine applies the verified fix diff straight to the
+    # files on disk (with .trace-bak backups) instead of only proposing it.
+    # Unverified diffs are never applied. The outcome lands in
+    # InvestigationReport.fix_applied so the UI can stay quiet (no extra
+    # window) and just report "fixed".
+    auto_fix: bool = False
+    # When True (and the server opted in via TRACE_ALLOW_TESTS=1), the engine
+    # runs the project's allowlisted test command and includes the output as
+    # evidence. Project scripts are never executed.
+    run_tests: bool = False
 
     def validate(self) -> list[str]:
         problems: list[str] = []
@@ -53,6 +63,8 @@ class InvestigationRequest:
             terminal_output=data.get("terminal_output"),
             extra_context=data.get("extra_context"),
             follow_up_of=data.get("follow_up_of"),
+            auto_fix=bool(data.get("auto_fix", False)),
+            run_tests=bool(data.get("run_tests", False)),
         )
 
     def to_dict(self) -> dict:
@@ -123,6 +135,10 @@ class InvestigationReport:
     # investigation: the id of the investigation it continues. Empty for a
     # first-pass report.
     follow_up_of: str = ""
+    # Populated when auto_fix applied (or attempted) the recommended diff:
+    # {"applied": bool, "applied_files": [...], "backup_paths": [...],
+    #  "warnings": [...], "dry_run": bool}. None when auto_fix was off.
+    fix_applied: dict | None = None
 
     def to_dict(self) -> dict:
         d = asdict(self)

@@ -144,6 +144,24 @@ class TestResultModel(unittest.TestCase):
         self.assertEqual(format_location("a.py", 4, 4), "a.py:4")
         self.assertEqual(format_location("", 0, 0), "(no file reported)")
 
+    def test_fix_applied_carried_through(self):
+        status = self._status()
+        status["report"]["fix_applied"] = {"applied": True,
+                                           "applied_files": ["app.py"],
+                                           "backup_paths": [], "warnings": [],
+                                           "dry_run": False}
+        view = build_result_view(status)
+        self.assertTrue(view.complete)
+        self.assertEqual(view.investigation_id, "inv-1")
+        self.assertTrue(view.fix_applied["applied"])
+
+    def test_apply_fix_client_posts(self):
+        with mock.patch.object(api_mod.urllib.request, "urlopen",
+                               return_value=_resp({"ok": True,
+                                                   "applied": True}, 200)):
+            out = TraceApiClient().apply_fix("inv-1")
+            self.assertTrue(out.get("applied"))
+
 
 class TestNoForbiddenIntegrations(unittest.TestCase):
     def test_no_neoma_integration_in_ui_or_backend(self):

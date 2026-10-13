@@ -84,12 +84,10 @@ def find_project_root(start: str | Path | None) -> Path | None:
         for marker in ROOT_MARKERS:
             if (candidate / marker).exists():
                 return candidate
-        # case-insensitive makefile/sln handled above; also *.sln glob
+        # *.sln glob (next with a default never raises StopIteration).
         try:
-            if next(candidate.glob("*.sln"), None):
+            if next(candidate.glob("*.sln"), None) is not None:
                 return candidate
-        except StopIteration:
-            pass
         except OSError:
             pass
     return base if base.is_dir() else None
@@ -289,26 +287,27 @@ def _inside(p: Path, root: Path) -> bool:
 
 
 def _module_to_trials(mod: str, source: Path, root: Path) -> list[Path]:
+    """Candidate files for an import string (relative first, then rooted)."""
     trials: list[Path] = []
-    rel = mod.replace(".", "/")
-    # Relative imports.
-    if mod.startswith("."):
+    if mod.startswith(("./", "../")):
+        # Explicit relative path (JS/TS style): resolve against the importer.
         base = source.parent
-        stripped = mod.lstrip(".")
-        rel = stripped.replace(".", "/")
+        for ext in (".ts", ".tsx", ".js", ".jsx", ".py"):
+            trials.append((base / mod).with_suffix(ext))
+        return trials
+    if mod.startswith("."):
+        # Dotted relative import (Python style): resolve against the importer.
+        base = source.parent
+        rel = mod.lstrip(".").replace(".", "/")
         trials += [base / (rel + ".py"), base / rel / "__init__.py",
                    base / (rel + ".ts"), base / (rel + ".js")]
-    else:
-        # Same-dir then root-relative.
-        for base in (source.parent, root):
-            for ext in (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java"):
-                trials.append(base / (rel + ext))
-            trials.append(base / rel / "__init__.py")
-        # JS ./x style
-        if mod.startswith(("./", "../")):
-            trials.append((source.parent / mod).with_suffix(".ts"))
-            trials.append((source.parent / mod).with_suffix(".js"))
-            trials.append((source.parent / mod).with_suffix(".py"))
+        return trials
+    # Bare module: same-dir first, then root-relative.
+    rel = mod.replace(".", "/")
+    for base in (source.parent, root):
+        for ext in (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs", ".java"):
+            trials.append(base / (rel + ext))
+        trials.append(base / rel / "__init__.py")
     return trials
 
 
