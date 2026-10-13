@@ -53,10 +53,12 @@ except the composition roots, which only wire startup (never business logic).
 | Backend never imports UI | `trace_backend/*` has no `trace_ui`/tkinter dependency (except stdlib `tkinter` as a clipboard reader inside `context_collector`, which imports no Trace UI code) |
 | L3 standalone | `ollama_client` ← only `config`; no evidence, validator, engine, or UI imports |
 | L4 downstream-only | `validator` ← only `project_inspector` + `schemas`; never calls model/orchestrator |
-| L2 orchestrates, doesn't host | `investigation_engine` never imports `server`; `server` hosts the engine and never touches evidence/model modules directly |
-| Transport is dumb | `traceApi.ts` is fetch-only HTTP (start/stream/cancel/open-file); renderer files are import-free plain scripts behind the preload bridge |
+| L2 orchestrates, doesn't host | `investigation_engine` never imports `server`; `server` hosts the engine and never touches evidence/model modules directly (fix + tools stay behind `engine.apply_fix`) |
+| Code intelligence is grounded | `code_tools` ← only `project_inspector`; search/outline/tests never execute project scripts (tests run only the allowlisted runner, opt-in) |
+| Safe fixer is grounded | `code_fixer` ← only `project_inspector` + `validator`; only verified hunks are written, always with `*.trace-bak` backups |
+| Transport is dumb | `traceApi.ts` is fetch-only HTTP (start/stream/cancel/open-file/apply-fix); renderer files are import-free plain scripts behind the preload bridge |
 | L1 Neo craft, Trace wiring | character renderer uses the bridge + Neo's spring/eye/poke/tuck code; no backend URLs, no model access, no Neoma (enforced by `tests/test_frontend_guards.py`, incl. face-verbatim fidelity) |
-| L5 renders backend JSON | results renderer builds Diagnosis/Locations/Fix/Evidence from status JSON; incomplete states render as honest banners |
+| L5 renders backend JSON | results renderer builds Diagnosis/Locations/Fix/Evidence from status JSON; incomplete states render as honest banners; Apply-fix calls the backend endpoint |
 | Single bridge | Only composition roots (`electron/src/main/main.ts` spawn + IPC, `trace_ui/app.py`, `main.py` CLI) reference both sides, for startup wiring only |
 
 ## History & follow-up (recall)
