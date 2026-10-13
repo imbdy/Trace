@@ -309,6 +309,7 @@ function emitStage(ev: { investigation_id?: string; stage: string; message: stri
 async function runInvestigation(text: string, opts: Record<string, unknown>, followUpOf?: string): Promise<void> {
   if (run) return;
   const abort = new AbortController();
+  const autoFix = !followUpOf && (opts.autoFix === true || (opts as { auto_fix?: boolean }).auto_fix === true);
   try {
     const id = followUpOf
       ? await api.followUp(followUpOf, text)
@@ -318,6 +319,7 @@ async function runInvestigation(text: string, opts: Record<string, unknown>, fol
           include_screenshot: true,
           screenshot_mode: "active",
           include_clipboard: false,
+          auto_fix: autoFix,
         });
     run = { id, abort };
     emitStage({ investigation_id: id, stage: "receive", message: "Sending request…", progress: 0.02 });
@@ -349,6 +351,14 @@ async function runInvestigation(text: string, opts: Record<string, unknown>, fol
     });
     if (status.status === "done" && status.report) {
       const verified = (status.report.findings ?? []).filter((f) => f.verified).length;
+      const fixed = status.report.fix_applied;
+      if (autoFix && fixed && fixed.applied) {
+        // "What's wrong, then go fix it": stay quiet, no results window —
+        // the bug is already fixed in place (backups kept).
+        const files = (fixed.applied_files ?? []).join(", ") || "the files";
+        notifyDone("Trace — fixed in place", `Fixed ${files}. Backups kept (*.trace-bak).`);
+        return;
+      }
       notifyDone(
         "Trace — investigation complete",
         verified > 0
@@ -566,6 +576,16 @@ function setupIpc(): void {
     }
   });
 
+  ipcMain.handle("trace:apply-fix", async (_e, id: string, dryRun?: boolean) => {
+    if (typeof id !== "string" || !id.trim()) return { ok: false, error: "missing id" };
+    try {
+      return await api.applyFix(id.trim(), !!dryRun);
+    } catch (e) {
+      const err = e as ApiError;
+      return { ok: false, error: err.message, code: (err as ApiError).code };
+    }
+  });
+
   ipcMain.handle("trace:settings", async () => {
     try {
       const d = settings.describe(cfg, Date.now());
@@ -608,15 +628,19 @@ async function runSmoke(projectDir: string): Promise<number> {
     hearth: !!document.querySelector('canvas#hearth'),
     chevronGone: !document.querySelector('#tab'),
     composer: !!document.querySelector('#ask-text'),
+    fixToggle: !!document.querySelector('#ask-fix'),
     steps: Array.from(document.querySelectorAll('#stitch .st')).map((s) => s.getAttribute('data-s')),
     dots: !!document.querySelector('.three-dots,.typing-indicator'),
     bridge: typeof window.trace?.submit === 'function',
+    fixBridge: typeof window.trace?.applyFix === 'function',
     title: document.querySelector('#leaf-title')?.textContent,
     neoma: (document.body.innerText || '').toLowerCase().includes('neoma'),
   }))()`);
   A(dom.hearth, "Neo face canvas present");
   A(dom.chevronGone, "chevron button removed");
   A(dom.composer, "composer present");
+  A(dom.fixToggle, "fix-it-for-me toggle present");
+  A(dom.fixBridge, "apply-fix bridge exposed");
   A(JSON.stringify(dom.steps) === JSON.stringify(["capture", "inspect", "analyze", "verify", "report"]),
     "stitch tracks investigation stages", JSON.stringify(dom.steps));
   A(!dom.dots, "no three-dot indicator in DOM");
@@ -636,7 +660,10 @@ async function runSmoke(projectDir: string): Promise<number> {
   A(openState.open === true, "shell click expands the chat");
   A(hb1.width === 732 && hb1.x + hb1.width / 2 === hb0.x + hb0.width / 2,
     "expansion re-perches: he stays in the middle", JSON.stringify(hb1));
-  A(Math.abs(hb1.height - hb0.height) <= 6, "expansion keeps height", `${hb0.height} -> ${hb1.height}`);
+  // The composer now carries a one-line "fix it for me" toggle, so the open
+  // leaf is slightly taller than the collapsed sill — bounded growth only.
+  A(hb1.height >= hb0.height && hb1.height - hb0.height <= 60,
+    "expansion grows only by the composer rows", `${hb0.height} -> ${hb1.height}`);
   A(openState.focused === "ask-text", "composer focused, ready to type");
   await charWin.webContents.executeJavaScript(`document.querySelector('#leaf-fold').click()`);
   await new Promise((r) => setTimeout(r, 600));

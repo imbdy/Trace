@@ -250,6 +250,10 @@ html, body {
 #ask-send:active { transform: scale(0.96); }
 #ask-send:disabled { opacity: 0.45; cursor: default; }
 #ask-send:focus-visible { outline: 2px solid #8faeff; outline-offset: 2px; }
+#ask-fix-row { display: flex; gap: 6px; align-items: center; margin-top: 6px;
+  color: rgba(233, 236, 241, 0.72); font-size: 11px; font-family: "Segoe UI", system-ui, sans-serif;
+  cursor: pointer; user-select: none; }
+#ask-fix-row input { accent-color: #8faeff; }
 
 #debug { position: absolute; top: 8px; left: 8px; display: flex; gap: 6px; }
 #debug[hidden] { display: none; }

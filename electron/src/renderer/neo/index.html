@@ -39,6 +39,10 @@
             placeholder="Describe the bug or paste the error…"></textarea>
           <button id="ask-send" type="button">Investigate</button>
         </div>
+        <label id="ask-fix-row" title="Fix the bug in place instead of only explaining it">
+          <input id="ask-fix" type="checkbox">
+          <span>Fix it for me (write the verified patch, keep a backup)</span>
+        </label>
         <div id="live" hidden>
           <div id="live-title-row"><span id="live-title">Investigation</span><span id="live-phase">—</span></div>
           <div id="stitch">

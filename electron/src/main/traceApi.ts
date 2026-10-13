@@ -106,6 +106,12 @@ export class TraceApi {
     return payload;
   }
 
+  async applyFix(id: string, dryRun = false): Promise<Record<string, unknown>> {
+    const { payload } = await this.request(
+      "POST", `/investigations/${encodeURIComponent(id)}/apply-fix`, { dry_run: dryRun });
+    return payload;
+  }
+
   // Yields REAL backend SSE events; skips malformed lines and keepalives.
   async *events(id: string, signal?: AbortSignal): AsyncGenerator<ProgressEvent> {
     let res;

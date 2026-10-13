@@ -107,6 +107,13 @@ class TraceApiClient:
         _, payload = self._request("POST", "/open-file", body)
         return payload
 
+    def apply_fix(self, inv_id: str, dry_run: bool = False) -> dict:
+        """Apply the investigation's verified fix diff to disk (with backups)."""
+        _, payload = self._request(
+            "POST", f"/investigations/{inv_id}/apply-fix",
+            {"dry_run": bool(dry_run)})
+        return payload
+
     def stream_events(self, inv_id: str, on_event,
                       stop: threading.Event | None = None) -> None:
         """Blocking SSE read. Calls on_event(dict) per event. Returns at the

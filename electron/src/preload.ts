@@ -9,6 +9,7 @@ export interface TraceBridge {
   submit: (text: string, opts?: Record<string, unknown>) => Promise<{ ok: boolean; id?: string; reason?: string }>;
   followUp: (parentId: string, text: string) => Promise<{ ok: boolean; reason?: string }>;
   cancel: () => Promise<{ ok: boolean }>;
+  applyFix: (id: string, dryRun?: boolean) => Promise<Record<string, unknown>>;
   showResults: () => Promise<{ ok: boolean }>;
   current: () => Promise<{ id: string | null }>;
   history: (query?: string) => Promise<Record<string, unknown>[]>;
@@ -28,6 +29,7 @@ const api: TraceBridge = {
   submit: (text, opts) => ipcRenderer.invoke("trace:submit", text, opts ?? {}),
   followUp: (parentId, text) => ipcRenderer.invoke("trace:follow-up", parentId, text),
   cancel: () => ipcRenderer.invoke("trace:cancel"),
+  applyFix: (id, dryRun) => ipcRenderer.invoke("trace:apply-fix", id, !!dryRun),
   showResults: () => ipcRenderer.invoke("trace:show-results"),
   current: () => ipcRenderer.invoke("trace:current"),
   history: (query) => ipcRenderer.invoke("trace:history", query ?? ""),

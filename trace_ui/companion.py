@@ -236,6 +236,13 @@ class Companion:
                                     font=("Segoe UI", 10), activebackground="#3a3a44",
                                     width=9, state="disabled")
         self.cancel_btn.pack(fill="x")
+        self.auto_fix_var = tk.BooleanVar(value=False)
+        self.auto_fix_check = tk.Checkbutton(
+            side, text="Fix files\ndirectly", variable=self.auto_fix_var,
+            bg=PANEL_BG, fg=MUTED, selectcolor=PANEL_BG,
+            activebackground=PANEL_BG, font=("Segoe UI", 8),
+            justify="left")
+        self.auto_fix_check.pack(fill="x", pady=(6, 0))
         self.hint = tk.Label(self.panel_frame,
                              text="Enter to send · Shift+Enter newline · Esc folds panel",
                              bg=PANEL_BG, fg=MUTED, font=("Segoe UI", 9))
@@ -352,6 +359,13 @@ class Companion:
         self.stage_text = message[:160]
 
     # -- events -------------------------------------------------------------
+    @property
+    def auto_fix(self) -> bool:
+        try:
+            return bool(self.auto_fix_var.get())
+        except Exception:
+            return False
+
     def _send(self):
         if self.on_submit is None or self.running:
             return
@@ -360,7 +374,10 @@ class Companion:
             self.stage_text = "Type a debugging question first"
             return
         self.input_text.delete("1.0", "end")
-        self.on_submit(text)
+        try:
+            self.on_submit(text, self.auto_fix)
+        except TypeError:
+            self.on_submit(text)
 
     def _cancel(self):
         if self.on_cancel is not None and self.running:

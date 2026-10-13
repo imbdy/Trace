@@ -379,8 +379,14 @@
   function driver() { return window.TraceDriver || null; }
   function doSubmit(text) {
     var d = driver();
-    if (d && typeof d.submit === 'function') return d.submit(text);
-    if (window.trace && window.trace.submit) return window.trace.submit(text);
+    var autoFix = false;
+    try {
+      var box = document.getElementById('ask-fix');
+      autoFix = !!(box && box.checked);
+    } catch (e) {}
+    var opts = autoFix ? { autoFix: true } : {};
+    if (d && typeof d.submit === 'function') return d.submit(text, opts);
+    if (window.trace && window.trace.submit) return window.trace.submit(text, opts);
     return Promise.resolve({ ok: false, reason: 'no-bridge' });
   }
   function doCancel() {

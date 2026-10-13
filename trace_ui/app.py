@@ -17,6 +17,24 @@ from .companion import Companion
 from .results_window import ResultsWindowManager
 
 
+def _fix_applied_summary(status: dict) -> str | None:
+    """Human line when auto_fix already wrote files; else None (show window).
+
+    Returns None when the report window should still open (not auto-fix, or
+    the fix was not applied).
+    """
+    try:
+        report = (status or {}).get("report") or {}
+        applied = report.get("fix_applied") or {}
+        if isinstance(applied, dict) and applied.get("applied"):
+            files = ", ".join(applied.get("applied_files", []))
+            return (f"Fixed {files or 'the files'} in place "
+                    "(backups kept as *.trace-bak).")
+    except Exception:
+        pass
+    return None
+
+
 class TraceApp:
     def __init__(self, base_url: str = "http://127.0.0.1:3777/api/v1",
                  project_dir: str | None = None,
@@ -146,7 +164,7 @@ class TraceApp:
     def is_running(self) -> bool:
         return self._worker is not None and self._worker.is_alive()
 
-    def submit(self, text: str):
+    def submit(self, text: str, auto_fix: bool = False):
         if self.is_running:
             self._ui_queue.put(("note", "Already investigating — cancel first."))
             return
@@ -157,7 +175,7 @@ class TraceApp:
                 return
         self._stop.clear()
         self._worker = threading.Thread(target=self._run_investigation,
-                                        args=(text,), daemon=True,
+                                        args=(text, bool(auto_fix)), daemon=True,
                                         name="trace-investigation")
         self._worker.start()
 
@@ -170,7 +188,7 @@ class TraceApp:
             except Exception:
                 pass
 
-    def _run_investigation(self, text: str):
+    def _run_investigation(self, text: str, auto_fix: bool = False):
         q = self._ui_queue
         q.put(("running", True))
         try:
@@ -180,6 +198,7 @@ class TraceApp:
                 "include_screenshot": True,
                 "screenshot_mode": "active",
                 "include_clipboard": False,
+                "auto_fix": bool(auto_fix),
             })
         except ApiError as e:
             q.put(("error", self._present(e)))
@@ -248,22 +267,31 @@ class TraceApp:
                     comp.set_running(False)
                     status = payload if isinstance(payload, dict) else {}
                     state = status.get("status", "")
+                    fixed = _fix_applied_summary(status)
                     if state == "done":
-                        comp.set_stage("done", "Investigation complete.", 1.0)
+                        if fixed:
+                            # Auto-fix path: stay quiet, no results window —
+                            # the bug is already fixed in place.
+                            comp.set_stage("done", fixed, 1.0)
+                        else:
+                            comp.set_stage("done", "Investigation complete.", 1.0)
                     elif state == "cancelled":
                         comp.set_stage("cancelled", "Cancelled.", 0.0)
                     else:
                         comp.set_error(f"Investigation {state or 'ended unexpectedly'}.")
-                    try:
-                        if self.results is not None:
-                            self.results.show(status)
-                            try:
-                                from .icons import apply_window_icon
-                                apply_window_icon(self.results.win)
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
+                    if fixed is None:
+                        # Normal path (or auto-fix that did not apply): show
+                        # the report window so the user can review / apply.
+                        try:
+                            if self.results is not None:
+                                self.results.show(status)
+                                try:
+                                    from .icons import apply_window_icon
+                                    apply_window_icon(self.results.win)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
         except queue.Empty:
             pass
         except Exception:

@@ -35,6 +35,7 @@ class ResultView:
     complete: bool
     status: str
     banner: str = ""
+    investigation_id: str = ""
     summary: str = ""
     root_cause: str = ""
     confidence: str = "low"
@@ -48,6 +49,8 @@ class ResultView:
     # True only when the fix's diff was verified against the real file; a fix
     # shown with this False must not be treated as applicable.
     fix_diff_verified: bool = False
+    # Populated when auto_fix wrote the diff to disk (files + .trace-bak).
+    fix_applied: dict | None = None
     alternative_hypotheses: list[str] = field(default_factory=list)
     needs_more_info: list[str] = field(default_factory=list)
     evidence_summary: str = ""
@@ -135,9 +138,12 @@ def _build(status: dict) -> ResultView:
     if not isinstance(rec, dict):
         rec = {}
 
+    fix_applied = report.get("fix_applied")
     return ResultView(
         complete=True,
         status="done",
+        investigation_id=str(report.get("investigation_id", "")
+                              or status.get("investigation_id", "")),
         summary=_s(report.get("summary", "")) or "No summary provided.",
         root_cause=_s(report.get("root_cause", "")) or "Unknown.",
         confidence=str(report.get("confidence", "low")),
@@ -149,6 +155,7 @@ def _build(status: dict) -> ResultView:
         fix_diff=_s(rec.get("diff", ""), 8000),
         fix_rationale=_s(rec.get("rationale", ""), 2000),
         fix_diff_verified=bool(rec.get("diff_verified", False)),
+        fix_applied=fix_applied if isinstance(fix_applied, dict) else None,
         alternative_hypotheses=[_s(h, 2000) for h in
                                 (report.get("alternative_hypotheses", []) or [])][:10],
         needs_more_info=[_s(n, 1000) for n in
