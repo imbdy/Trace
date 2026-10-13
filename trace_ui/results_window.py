@@ -3,8 +3,9 @@
 Single instance per app (ResultsWindowManager): repeated investigations
 update the same window instead of spawning duplicates. Dark theme matching
 the companion. All long text is selectable; code excerpts get lightweight
-regex syntax highlighting (no dependencies). No editing controls exist —
-Trace never modifies source files.
+regex syntax highlighting (no dependencies). The only editing control is
+"Apply fix": it writes the VERIFIED patch to disk (with .trace-bak backups)
+via the backend apply-fix endpoint. Unverified patches stay review-only.
 """
 
 from __future__ import annotations
@@ -32,6 +33,13 @@ KEYWORDS = ("def|class|return|if|elif|else|for|while|import|from|as|with|try|"
             "struct|fn|pub|match|switch|case|sizeof|null|this|self|static|void|"
             "int|string|bool|public|private|using|namespace")
 
+_HIGHLIGHT_PATTERNS: tuple[tuple["re.Pattern[str]", str], ...] = (
+    (re.compile(r"#[^\n]*|//[^\n]*"), "com"),
+    (re.compile(r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'|"[^"\n]*"|\'[^\'\n]*\''), "str"),
+    (re.compile(rf"\b({KEYWORDS})\b"), "kw"),
+    (re.compile(r"\b\d+(?:\.\d+)?\b"), "num"),
+)
+
 
 def highlight(node: tk.Text):
     """Apply lightweight syntax tags to a code Text widget's content."""
@@ -40,12 +48,9 @@ def highlight(node: tk.Text):
     node.tag_configure("str", foreground="#a7f3d0")
     node.tag_configure("com", foreground="#6b7280")
     node.tag_configure("num", foreground="#fbbf24")
-    for pat, tag in ((r"#[^\n]*|//[^\n]*", "com"),
-                     (r'"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'|"[^"\n]*"|\'[^\'\n]*\'', "str"),
-                     (rf"\b({KEYWORDS})\b", "kw"),
-                     (r"\b\d+(?:\.\d+)?\b", "num")):
+    for rx, tag in _HIGHLIGHT_PATTERNS:
         try:
-            for m in re.finditer(pat, text):
+            for m in rx.finditer(text):
                 s = f"1.0+{m.start()}c"
                 e = f"1.0+{m.end()}c"
                 node.tag_add(tag, s, e)
@@ -175,9 +180,17 @@ class ResultsWindowManager:
         else:
             self._para(B, "No fix proposed — the evidence does not support one yet.",
                        muted=True)
+        if view.fix_applied and view.fix_applied.get("applied"):
+            files = ", ".join(view.fix_applied.get("applied_files", []))
+            self._para(B, f"Fixed directly in: {files or '(unknown files)'} "
+                          "Backups kept as *.trace-bak.")
         if view.fix_diff:
-            self._h2(B, "Proposed patch (review before applying — Trace never edits files)")
+            if view.fix_diff_verified:
+                self._h2(B, "Proposed patch (verified — safe to apply)")
+            else:
+                self._h2(B, "Proposed patch (unverified — review only, cannot auto-apply)")
             self._code(B, view.fix_diff, lang="diff")
+            self._fix_buttons(B, view)
         if view.fix_rationale:
             self._para(B, view.fix_rationale)
         if view.alternative_hypotheses:
@@ -326,6 +339,42 @@ class ResultsWindowManager:
             pass
         t.pack(fill="x", expand=True)
         hbar.pack(fill="x")
+
+    def _fix_buttons(self, parent, view: ResultView):
+        row = tk.Frame(parent, bg=BG)
+        row.pack(fill="x", padx=16, pady=4)
+        status = tk.Label(row, text="", bg=BG, fg=MUTED,
+                          font=("Segoe UI", 9), anchor="w")
+        status.pack(side="left", fill="x", expand=True)
+
+        def _apply():
+            if self.api is None or not view.investigation_id:
+                status.configure(text="Backend not connected.", fg=AMBER)
+                return
+            if not view.fix_diff_verified:
+                status.configure(
+                    text="Unverified patch: refusing to write to disk.", fg=AMBER)
+                return
+            try:
+                res = self.api.apply_fix(view.investigation_id)
+            except Exception as e:
+                status.configure(text=f"Apply failed: {e}", fg=AMBER)
+                return
+            if res.get("ok") or res.get("applied"):
+                files = ", ".join(res.get("applied_files", []))
+                status.configure(
+                    text=f"Applied to {files or 'files'}. Backups kept (*.trace-bak).",
+                    fg=GREEN)
+            else:
+                reason = res.get("reason") or res.get("error", {}).get("message", "")
+                status.configure(text=f"Not applied: {reason or 'see warnings'}",
+                                 fg=AMBER)
+
+        tk.Button(row, text="Apply fix to files (backup kept)",
+                  command=_apply, bg="#26262e", fg=FG, relief="flat",
+                  font=("Segoe UI", 9, "bold"),
+                  state="normal" if view.fix_diff_verified else "disabled").pack(
+                      side="right")
 
     def _open(self, path: str, line: int):
         if self.api is None or not path:

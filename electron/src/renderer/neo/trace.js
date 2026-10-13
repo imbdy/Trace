@@ -93,18 +93,26 @@
     var findings = Array.isArray(rep.findings) ? rep.findings : [];
     var verified = findings.filter(function (f) { return f && f.verified; }).length;
     var warnings = Array.isArray(rep.warnings) ? rep.warnings.length : 0;
+    var fixed = rep.fix_applied && rep.fix_applied.applied ? rep.fix_applied : null;
     if (p) {
       try {
         p.finish('done', rep.investigation_id || currentId, 'Investigation');
-        p.verdict(
-          (rep.summary || 'The investigation finished.') +
-          (verified ? ' ' + verified + ' verified location' + (verified === 1 ? '' : 's') + '.' : ''),
-          rep.investigation_id || currentId, 'Investigation');
+        var line = rep.summary || 'The investigation finished.';
+        if (fixed) {
+          var files = (fixed.applied_files || []).join(', ') || 'the files';
+          line = 'Fixed ' + files + ' in place (backups kept). ' + line;
+        } else if (verified) {
+          line += ' ' + verified + ' verified location' + (verified === 1 ? '' : 's') + '.';
+        }
+        p.verdict(line, rep.investigation_id || currentId, 'Investigation');
       } catch (e) {}
     }
     if (c) {
       try {
-        if (warnings && !verified) c.warning('Review this', String(rep.warnings[0]).slice(0, 90));
+        if (fixed) {
+          var n = (fixed.applied_files || []).length;
+          c.done('Fixed', 'fixed ' + n + ' file' + (n === 1 ? '' : 's') + ' — all set.', verified, 'excited');
+        } else if (warnings && !verified) c.warning('Review this', String(rep.warnings[0]).slice(0, 90));
         else c.done('Done', verified ? verified + ' verified spot' + (verified === 1 ? '' : 's') + ' — all set.' : 'no solid location — all set.', verified, verified ? 'excited' : 'success');
       }
       catch (e) {}
@@ -112,14 +120,21 @@
     currentId = null;
   }
 
-  function submit(text) {
+  function submit(text, opts) {
     if (running) return Promise.resolve({ ok: false, reason: 'busy' });
     if (!text || !String(text).trim()) return Promise.resolve({ ok: false, reason: 'empty' });
     setRunning(true);
     var c = shell();
     var p = panel();
-    if (c) { try { c.working('Trace', 'Sending request…', 'thinking'); } catch (e) {} }
-    return window.trace.submit(String(text).slice(0, 8000)).then(function (res) {
+    if (c) {
+      try {
+        var fixNote = opts && (opts.autoFix || opts.auto_fix) ? 'Sending request… (will fix in place)' : 'Sending request…';
+        c.working('Trace', fixNote, 'thinking');
+      } catch (e) {}
+    }
+    var payload = String(text).slice(0, 8000);
+    var submitOpts = opts && typeof opts === 'object' ? opts : {};
+    return window.trace.submit(payload, submitOpts).then(function (res) {
       if (!res || res.ok === false) {
         setRunning(false);
         if (c) { try { c.error('Hmm', res && res.reason === 'busy' ? 'one at a time.' : 'could not start that one.'); } catch (e) {} }

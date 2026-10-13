@@ -10,6 +10,8 @@ export interface StartRequest {
   editor_selection?: string;
   terminal_output?: string;
   extra_context?: string;
+  auto_fix?: boolean;
+  run_tests?: boolean;
 }
 
 export interface ProgressEvent {
@@ -40,6 +42,14 @@ export interface RecommendedFix {
   diff_verified?: boolean;
 }
 
+export interface FixApplied {
+  applied: boolean;
+  applied_files: string[];
+  backup_paths: string[];
+  warnings: string[];
+  dry_run: boolean;
+}
+
 export interface InvestigationReport {
   investigation_id: string;
   summary: string;
@@ -53,6 +63,7 @@ export interface InvestigationReport {
   evidence_summary: string;
   warnings: string[];
   created_at: number;
+  fix_applied?: FixApplied | null;
 }
 
 export type InvestigationState = "running" | "done" | "error" | "cancelled";

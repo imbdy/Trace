@@ -13,12 +13,17 @@ interface RendererFix {
   rationale?: string;
   diff_verified?: boolean;
 }
+interface RendererFixApplied {
+  applied: boolean; applied_files: string[]; backup_paths: string[];
+  warnings: string[]; dry_run: boolean;
+}
 interface RendererReport {
   summary: string; root_cause: string; confidence: string;
   confidence_rationale: string; findings: RendererFinding[];
   recommended_fix?: RendererFix | null;
   alternative_hypotheses: string[]; needs_more_info: string[];
   evidence_summary: string; warnings: string[];
+  fix_applied?: RendererFixApplied | null;
 }
 interface RendererStatus {
   investigation_id: string;
@@ -29,6 +34,7 @@ interface RendererStatus {
 }
 interface TraceWindowBridge {
   openFile: (path: string, line?: number) => Promise<Record<string, unknown>>;
+  applyFix: (id: string, dryRun?: boolean) => Promise<Record<string, unknown>>;
   followUp: (parentId: string, text: string) => Promise<{ ok: boolean; reason?: string }>;
   history: (query?: string) => Promise<Record<string, unknown>[]>;
   showHistory: (id: string) => Promise<{ ok: boolean; reason?: string }>;

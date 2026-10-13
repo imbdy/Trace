@@ -119,6 +119,36 @@ function copyBox(code: string): HTMLElement {
   return box;
 }
 
+function applyBox(invId: string, verified: boolean): HTMLElement {
+  const box = el("div", "copy-box");
+  const bar = el("div", "copy-bar");
+  bar.appendChild(el("span", "copy-label", verified ? "Verified patch" : "Unverified patch"));
+  const button = el("button", "copy-btn", "Apply fix to files") as HTMLButtonElement;
+  const note = el("span", "muted", verified ? "backup kept (*.trace-bak)" : "cannot auto-apply: unverified");
+  if (!verified || !invId) button.disabled = true;
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    note.textContent = "Applying…";
+    try {
+      const bridge = window.trace as unknown as { applyFix?: (id: string) => Promise<Record<string, unknown>> };
+      if (!bridge.applyFix) { note.textContent = "Update Trace to apply fixes."; return; }
+      const res = await bridge.applyFix(invId) as { ok?: boolean; applied?: boolean; applied_files?: string[]; reason?: string; error?: string };
+      if (res && (res.ok || res.applied)) {
+        note.textContent = `Applied to ${(res.applied_files || []).join(", ") || "files"}. Backups kept.`;
+      } else {
+        note.textContent = `Not applied: ${(res && (res.reason || res.error)) || "see warnings"}`;
+        button.disabled = false;
+      }
+    } catch (e) {
+      note.textContent = `Not applied: ${(e as Error).message}`;
+      button.disabled = false;
+    }
+  });
+  bar.appendChild(button);
+  box.append(bar, note);
+  return box;
+}
+
 function findingCard(f: RendererFinding): HTMLElement {
   const card = el("div", "card");
   card.setAttribute("data-finding", f.verified ? "verified" : "hypothesis");
@@ -271,9 +301,13 @@ function render(status: RendererStatus): void {
 
   h1("Fix");
   if (fix?.description) para(shortText(fix.description));
+  if (r.fix_applied && r.fix_applied.applied) {
+    para(`Fixed directly in: ${(r.fix_applied.applied_files || []).join(", ") || "the files"}. Backups kept (*.trace-bak).`);
+  }
   if (fix?.diff) {
     mount.appendChild(copyBox(fixedLines(fix.diff)));
     if (fix.diff_verified === false) mount.appendChild(el("p", "note warn", "Review these lines against the current file before applying."));
+    else mount.appendChild(applyBox(activeInvestigation, fix.diff_verified === true));
   } else para("No fixed lines were proposed yet.", "muted");
 
   const details = document.createElement("details");
@@ -296,7 +330,11 @@ function render(status: RendererStatus): void {
   h1("Proposed solution");
   if (fix?.description) para(fix.description);
   else para("No fix proposed — the evidence does not support one yet.", "muted");
-  if (fix?.diff) { h2("Proposed patch"); mount.appendChild(codeBlock(fix.diff)); }
+  if (fix?.diff) {
+    h2(fix.diff_verified ? "Proposed patch (verified — safe to apply)" : "Proposed patch (unverified — review only)");
+    mount.appendChild(codeBlock(fix.diff));
+    mount.appendChild(applyBox(activeInvestigation, fix.diff_verified === true));
+  }
   if (fix?.rationale) para(fix.rationale);
   if (r.alternative_hypotheses?.length) { h2("Alternative hypotheses"); mount.appendChild(bulletList(r.alternative_hypotheses)); }
   h1("Investigation evidence");
