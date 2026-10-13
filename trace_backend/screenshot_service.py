@@ -142,7 +142,8 @@ def capture_screenshot(mode: str = "active",
     w = h = -1
     source = ""
     errors: list[str] = []
-    for grabber in (_grab_mss_with_flag(full), _grab_pillow_fn()):
+    grabbers = [lambda: _grab_mss(full), _grab_pillow]
+    for grabber in grabbers:
         try:
             png, w, h, source = grabber()
             break
@@ -176,18 +177,6 @@ def capture_screenshot(mode: str = "active",
     return ScreenshotResult(width=w, height=h, source=source,
                             png_bytes=png, temp_path=temp_path,
                             captured_at=time.time())
-
-
-def _grab_mss_with_flag(full: bool):
-    def _run():
-        return _grab_mss(full)
-    return _run
-
-
-def _grab_pillow_fn():
-    def _run():
-        return _grab_pillow()
-    return _run
 
 
 def dispose(result: ScreenshotResult | None) -> None:

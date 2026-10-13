@@ -19,10 +19,19 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import threading
 from pathlib import Path
 from typing import Callable
 
+from .code_fixer import apply_unified_diff
+from .code_tools import (
+    complexity_snapshot,
+    file_outline,
+    find_symbol,
+    run_project_tests,
+    search_text,
+)
 from .config import TraceConfig
 from .context_collector import LocalContext, collect_local_context
 from .git_context import finding_git_context
@@ -65,8 +74,8 @@ ProgressCallback = Callable[[ProgressEvent], None]
 
 
 SYSTEM_PROMPT = """You are Trace, a careful debugging assistant. Analyze the provided evidence \
-(screenshots described as text, code excerpts, error messages, diagnostics) and return ONLY valid JSON \
-with this exact schema:
+(screenshots described as text, code excerpts, outlines, error messages, diagnostics, \
+test output) and return ONLY valid JSON with this exact schema:
 {"summary": str, "root_cause": str, "confidence": "low"|"medium"|"high",
  "confidence_rationale": str, "findings": [{"title": str, "file_path": str, \
 "start_line": int, "end_line": int, "explanation": str, "evidence": str}],
@@ -75,7 +84,9 @@ with this exact schema:
 Rules: only cite file paths and line numbers that appear in the provided FILE excerpts or \
 error stack frames. Never invent paths, line numbers, compiler output, or test results. If evidence \
 is insufficient, set confidence to "low", explain what is known vs uncertain, and list the next \
-diagnostic step in needs_more_info."""
+diagnostic step in needs_more_info. When you propose a fix, return a MINIMAL unified diff \
+("--- a/path" / "+++ b/path" with @@ hunks) whose context lines match the real file exactly, \
+so it can be applied directly; keep hunks small and scoped to the bug."""
 
 
 def _check_cancelled(cancel: threading.Event | None):
@@ -168,6 +179,167 @@ def _enrich_git_context(root: Path | None, report: InvestigationReport) -> None:
             f.git_context = ""
 
 
+def _is_within(path: Path, root: Path) -> bool:
+    """True when ``path`` resolves inside ``root`` (shared helper)."""
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except (ValueError, OSError):
+        return False
+
+
+def _dict_to_fix(fix: dict):
+    """Rebuild a RecommendedFix from a stored dict (never raises)."""
+    from .schemas import RecommendedFix as _RF
+    try:
+        return _RF(description=str(fix.get("description", "")),
+                   diff=str(fix.get("diff")) if fix.get("diff") else None,
+                   rationale=str(fix.get("rationale", "")),
+                   diff_verified=bool(fix.get("diff_verified", False)))
+    except Exception:
+        return _RF(description="", diff=None)
+
+
+def _read_frame_files(root: Path, error: ErrorInfo,
+                      seen: set[Path], files: list[tuple[Path, str]],
+                      read_notes: list[str], max_bytes: int,
+                      cancel: threading.Event | None) -> None:
+    """Read stack-trace frames first (strongest signal). Mutates in place."""
+    for frame in error.frames[:8]:
+        _check_cancelled(cancel)
+        content, note = safe_read(root, frame.file, max_bytes=max_bytes)
+        if content is not None:
+            p = (root / frame.file).resolve() \
+                if not Path(frame.file).is_absolute() else Path(frame.file)
+            if p not in seen:
+                files.append((p, content[:12000]))
+                seen.add(p)
+            read_notes.append(f"{frame.file}:{frame.line} ({note})")
+        else:
+            read_notes.append(f"{frame.file} — {note}")
+
+
+def _read_candidate_files(root: Path, query: str,
+                          seen: set[Path], files: list[tuple[Path, str]],
+                          max_bytes: int,
+                          cancel: threading.Event | None) -> None:
+    """Read ranked candidates + one level of imports (bounded)."""
+    for cand in list_candidate_files(root, query):
+        _check_cancelled(cancel)
+        if cand in seen:
+            continue
+        try:
+            rel = cand.relative_to(root)
+        except ValueError:
+            continue
+        content, _note = safe_read(root, rel, max_bytes=max_bytes)
+        if content is not None:
+            files.append((cand, content[:12000]))
+            seen.add(cand)
+            if len(files) <= 3:  # follow imports for the top hits only
+                for related in follow_imports(cand, root):
+                    if related in seen or len(files) >= 12:
+                        break
+                    if related.is_absolute():
+                        target: str | Path = related
+                    else:
+                        target = related.relative_to(root) \
+                            if _is_within(related, root) else related
+                    extra, _ = safe_read(root, target, max_bytes=max_bytes)
+                    if extra is not None:
+                        files.append((related, extra[:12000]))
+                        seen.add(related)
+        if len(files) >= 12:
+            break
+
+
+def _code_intelligence_section(root: Path, error: ErrorInfo,
+                               files: list[tuple[Path, str]]) -> str:
+    """Bounded symbol/outline evidence so the model cites real definitions."""
+    parts: list[str] = []
+    try:
+        keywords = [w for w in
+                    re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}",
+                               error.message or "")][:5]
+        for kw in keywords[:3]:
+            for hit in find_symbol(root, kw, limit=3):
+                parts.append(f"symbol {kw}: {hit.path}:{hit.line}: {hit.snippet}")
+                if len("\n".join(parts)) > 2000:
+                    break
+    except Exception:
+        pass
+    try:
+        for path, content in files[:4]:
+            try:
+                outline = file_outline(path)[:12]
+            except Exception:
+                continue
+            if outline:
+                desc = ", ".join(f"{e.kind} {e.name}@{e.line}" for e in outline)
+                try:
+                    rel = path.relative_to(root)
+                except ValueError:
+                    rel = path
+                parts.append(f"outline {rel}: {desc}")
+                snap = complexity_snapshot(path, content)
+                if snap.get("notes"):
+                    parts.append(f"notes {rel}: {'; '.join(snap['notes'])}")
+            if len("\n".join(parts)) > 3000:
+                break
+    except Exception:
+        pass
+    if not parts:
+        return ""
+    return "CODE INTELLIGENCE:\n" + "\n".join(parts)[:3500]
+
+
+def _maybe_auto_fix(root: Path | None, report: InvestigationReport,
+                    auto_fix: bool, allow_edits: bool) -> InvestigationReport:
+    """Apply the verified fix diff when auto_fix was requested. Never raises."""
+    if not auto_fix:
+        return report
+    if not allow_edits:
+        report.warnings.append(
+            "Auto-fix requested but file edits are disabled "
+            "(TRACE_ALLOW_FILE_EDITS=0); showing the proposed patch only.")
+        report.fix_applied = {"applied": False, "applied_files": [],
+                              "backup_paths": [], "dry_run": False,
+                              "warnings": ["file edits disabled"]}
+        return report
+    fix = report.recommended_fix
+    if fix is None or not (fix.diff or "").strip():
+        report.warnings.append("Auto-fix requested but no fix diff was proposed.")
+        report.fix_applied = {"applied": False, "applied_files": [],
+                              "backup_paths": [], "dry_run": False,
+                              "warnings": ["no diff proposed"]}
+        return report
+    if not fix.diff_verified:
+        report.warnings.append(
+            "Auto-fix skipped: the proposed patch could not be verified "
+            "against the files on disk.")
+        report.fix_applied = {"applied": False, "applied_files": [],
+                              "backup_paths": [], "dry_run": False,
+                              "warnings": ["diff unverified"]}
+        return report
+    try:
+        result = apply_unified_diff(root, fix.diff)
+    except Exception as e:  # pragma: no cover - code_fixer never raises
+        report.warnings.append(f"Auto-fix failed: {e}")
+        report.fix_applied = {"applied": False, "applied_files": [],
+                              "backup_paths": [], "dry_run": False,
+                              "warnings": [str(e)]}
+        return report
+    report.fix_applied = result.to_dict()
+    if result.applied:
+        report.warnings.append(
+            "Auto-fix applied to: " + ", ".join(result.applied_files)
+            + ". Backups kept alongside each file (*.trace-bak).")
+    else:
+        report.warnings.extend(result.warnings or
+                               ["Auto-fix could not be applied."])
+    return report
+
+
 class InvestigationEngine:
     def __init__(self, config: TraceConfig | None = None,
                  ollama: OllamaClient | None = None):
@@ -257,64 +429,44 @@ class InvestigationEngine:
                 request.editor_selection or "", request.extra_context or ""] if t)
             error: ErrorInfo = extract_error_info(combined_text)
 
-            # 6. read files
+            # 6. read files (frames first, then ranked candidates + imports)
             _check_cancelled(cancel_event)
             emit("read_files", f"Reading relevant files under {root}…")
             files: list[tuple[Path, str]] = []
             read_notes: list[str] = []
-            # a) frames from stack trace first (strongest signal)
             seen: set[Path] = set()
-            for frame in error.frames[:8]:
-                _check_cancelled(cancel_event)
-                content, note = safe_read(root, frame.file,
-                                          max_bytes=self.config.max_file_bytes)
-                if content is not None:
-                    p = (root / frame.file).resolve() if not Path(frame.file).is_absolute() \
-                        else Path(frame.file)
-                    if p not in seen:
-                        files.append((p, content[:12000]))
-                        seen.add(p)
-                    read_notes.append(f"{frame.file}:{frame.line} ({note})")
-                else:
-                    read_notes.append(f"{frame.file} — {note}")
-            # b) ranked candidates from request text
-            for cand in list_candidate_files(root, request.request_text + " " + error.message):
-                _check_cancelled(cancel_event)
-                if cand in seen:
-                    continue
-                try:
-                    rel = cand.relative_to(root)
-                except ValueError:
-                    continue
-                content, note = safe_read(root, rel, max_bytes=self.config.max_file_bytes)
-                if content is not None:
-                    files.append((cand, content[:12000]))
-                    seen.add(cand)
-                    # follow imports for the top hit only (bounded)
-                    if len(files) <= 3:
-                        for rel2 in follow_imports(cand, root):
-                            if rel2 not in seen and len(files) < 12:
-                                c2, _ = safe_read(root, rel2 if rel2.is_absolute()
-                                                  else rel2.relative_to(root)
-                                                  if _in(rel2, root) else rel2,
-                                                  max_bytes=self.config.max_file_bytes)
-                                if c2 is not None:
-                                    files.append((rel2, c2[:12000]))
-                                    seen.add(rel2)
-                if len(files) >= 12:
-                    break
+            _read_frame_files(root, error, seen, files, read_notes,
+                              self.config.max_file_bytes, cancel_event)
+            _read_candidate_files(
+                root, request.request_text + " " + error.message,
+                seen, files, self.config.max_file_bytes, cancel_event)
             if not files:
                 needs_more.append(
                     "No relevant project files could be identified. Select the project "
                     "folder, paste the error output, or name the file you suspect.")
 
-            # 7. diagnostics
+            # 7. diagnostics (+ opt-in tests + code intelligence)
             _check_cancelled(cancel_event)
             emit("diagnostics", "Collecting compiler/linter/test diagnostics…")
             diagnostics = collect_diagnostics(
                 root, [p for p, _ in files],
                 timeout_s=self.config.diagnostics_timeout_s)
             _check_cancelled(cancel_event)
+            intelligence = _code_intelligence_section(root, error, files)
+            test_note = ""
+            if request.run_tests:
+                test_res = run_project_tests(
+                    root, timeout_s=self.config.diagnostics_timeout_s,
+                    allowed=self.config.allow_test_execution)
+                if test_res.get("ran"):
+                    test_note = (f"TESTS ({' '.join(test_res['command'])}): "
+                                 f"{test_res.get('reason', '')}\n"
+                                 f"{test_res.get('output', '')[:3000]}")
+                else:
+                    test_note = f"TESTS skipped: {test_res.get('reason', '')}"
+                    needs_more.append(
+                        "Test execution is opt-in (TRACE_ALLOW_TESTS=1); "
+                        "enable it to include test output as evidence.")
 
             # 8. model analysis
             emit("model_analysis", "Thinking through the evidence…")
@@ -322,8 +474,13 @@ class InvestigationEngine:
                 request_text=request.request_text, error=error, files=files,
                 diagnostics=diagnostics, local_summary=ctx.summary() + "\n" + screenshot_note,
                 budget_chars=self.config.max_context_chars)
+            if intelligence:
+                bundle = (bundle + "\n\n---\n\n" + intelligence)[:self.config.max_context_chars]
+            if test_note:
+                bundle = (bundle + "\n\n---\n\n" + test_note)[:self.config.max_context_chars]
             user_prompt = (bundle + "\n\n---\n\nAnalyze the evidence above and return ONLY the JSON report. "
-                           "Do not invent file paths or line numbers.")
+                           "Do not invent file paths or line numbers. "
+                           "Propose a minimal unified diff that applies cleanly.")
             messages = [{"role": "system", "content": SYSTEM_PROMPT},
                         {"role": "user", "content": user_prompt}]
             if screenshot_b64 and shot is not None:
@@ -356,6 +513,11 @@ class InvestigationEngine:
             report = sanitize_report(root, report)
             # Add grounded git "last changed" context to verified findings.
             _enrich_git_context(root, report)
+            # 9b. auto-fix: go straight to the file and fix the bug when asked.
+            if request.auto_fix:
+                emit("validate", "Applying the verified fix…")
+                report = _maybe_auto_fix(root, report, True,
+                                         self.config.allow_file_edits)
 
             # 10. report
             emit("report", "Investigation complete.")
@@ -520,6 +682,47 @@ class InvestigationEngine:
         say("report", "Follow-up complete.")
         return report
 
+    # -- apply-fix ----------------------------------------------------------
+    def apply_fix(self, report: InvestigationReport | dict,
+                  project_dir: str | None,
+                  *, dry_run: bool = False) -> dict:
+        """Apply a completed report's verified fix diff to disk.
+
+        Keeps the HTTP layer thin: root resolution + edit guard + diff
+        application all live here (the engine already owns root + validator).
+        Never raises: failures become ``{"ok": False, ...}``.
+        """
+        try:
+            rep = report if isinstance(report, dict) else report.to_dict()
+        except Exception:
+            return {"ok": False, "applied": False, "reason": "bad report"}
+        if not self.config.allow_file_edits:
+            return {"ok": False, "applied": False,
+                    "reason": "file edits are disabled (TRACE_ALLOW_FILE_EDITS=0)"}
+        fix = (rep.get("recommended_fix") or {}) if isinstance(rep, dict) else {}
+        diff = fix.get("diff") if isinstance(fix, dict) else None
+        if not diff or not str(diff).strip():
+            return {"ok": False, "applied": False, "reason": "no fix diff proposed"}
+        root = find_project_root(project_dir) if project_dir else None
+        if root is None:
+            return {"ok": False, "applied": False,
+                    "reason": "project root could not be identified"}
+        if not bool(fix.get("diff_verified", False)):
+            # Re-ground right now: the file may have changed since diagnosis.
+            from .validator import verify_fix_diff
+            ok, warnings = verify_fix_diff(root, _dict_to_fix(fix))
+            if not ok:
+                return {"ok": False, "applied": False,
+                        "reason": "diff could not be verified against current files",
+                        "warnings": warnings}
+        result = apply_unified_diff(root, str(diff), dry_run=bool(dry_run))
+        out = result.to_dict()
+        out["ok"] = bool(result.applied) if not dry_run else True
+        if not dry_run and not result.applied:
+            out["ok"] = False
+            out.setdefault("reason", "; ".join(result.warnings) or "not applied")
+        return out
+
     # -- parsing ------------------------------------------------------------
     @staticmethod
     def _parse_report(inv_id: str, raw: str) -> InvestigationReport:
@@ -606,8 +809,5 @@ class InvestigationEngine:
 
 
 def _in(p: Path, root: Path) -> bool:
-    try:
-        p.resolve().relative_to(root.resolve())
-        return True
-    except ValueError:
-        return False
+    """Legacy alias for :func:`_is_within` (kept for external imports)."""
+    return _is_within(p, root)

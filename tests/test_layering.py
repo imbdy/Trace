@@ -112,7 +112,7 @@ class TestLayering(unittest.TestCase):
             allow_abs={"trace_backend"},
             allow_rel={"config", "context_collector", "ollama_client",
                        "project_inspector", "schemas", "screenshot_service",
-                       "validator", "git_context"},
+                       "validator", "git_context", "code_fixer", "code_tools"},
             forbid_rel={"server", "history"},
             message="L2 orchestrator must not depend on HTTP hosting"))
 
@@ -122,8 +122,27 @@ class TestLayering(unittest.TestCase):
             allow_abs={"trace_backend"},
             allow_rel={"config", "history", "investigation_engine", "schemas"},
             forbid_rel={"ollama_client", "screenshot_service",
-                        "project_inspector", "context_collector", "validator"},
+                        "project_inspector", "context_collector", "validator",
+                        "code_fixer", "code_tools"},
             message="server hosts the engine; evidence/model stay behind it"))
+
+    def test_code_tools_are_downstream_helpers(self):
+        self.assertIsNone(check_file(
+            "trace_backend/code_tools.py",
+            allow_abs={"trace_backend"},
+            allow_rel={"project_inspector"},
+            forbid_rel={"ollama_client", "investigation_engine", "server",
+                        "validator", "history"},
+            message="code tools are safe helpers; no model/server coupling"))
+
+    def test_code_fixer_is_grounded(self):
+        self.assertIsNone(check_file(
+            "trace_backend/code_fixer.py",
+            allow_abs={"trace_backend"},
+            allow_rel={"project_inspector", "validator", "schemas"},
+            forbid_rel={"ollama_client", "investigation_engine", "server",
+                        "context_collector", "screenshot_service", "history"},
+            message="fixer may only ground diffs against disk"))
 
     def test_history_journal_is_stdlib_only(self):
         # The journal is dict-based on purpose: it must survive without the

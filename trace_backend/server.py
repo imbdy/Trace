@@ -9,6 +9,7 @@ Endpoints (see docs/API_CONTRACT.md):
   GET  /api/v1/investigations/{id}/events   SSE progress stream
   POST /api/v1/investigations/{id}/cancel   cancel a running investigation
   POST /api/v1/investigations/{id}/follow-up  ask a follow-up question
+  POST /api/v1/investigations/{id}/apply-fix  apply the verified fix diff
   POST /api/v1/open-file                    {path, line?} → OS open
 
 Binds to 127.0.0.1 only. Never expose to the network.
@@ -411,6 +412,9 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
             if (len(parts) == 6 and parts[1:4] == ["api", "v1", "investigations"]
                     and parts[5] == "follow-up"):
                 return self._start_follow_up(parts[4])
+            if (len(parts) == 6 and parts[1:4] == ["api", "v1", "investigations"]
+                    and parts[5] == "apply-fix"):
+                return self._apply_fix(parts[4])
             if path == "/api/v1/open-file":
                 data = self._read_json()
                 target = str(data.get("path", ""))
@@ -456,6 +460,48 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
             job = store.start(req, prior_report=prior)
             return self._send_json({"investigation_id": job.id,
                                     "follow_up_of": parent_id}, 202)
+
+        def _apply_fix(self, inv_id: str):
+            """POST /api/v1/investigations/{id}/apply-fix → 200.
+
+            Applies the completed report's VERIFIED fix diff straight to the
+            files on disk (with .trace-bak backups). Unverified diffs are
+            refused with 409, never force-applied. Body: {"dry_run": bool}.
+            """
+            data = self._read_json()
+            dry_run = bool(data.get("dry_run", False))
+            report = store.resolve_report(inv_id)
+            if report is None:
+                job = store.get(inv_id)
+                if job is not None and job.status == "running":
+                    return self._send_json(error_envelope(
+                        "bad_state",
+                        "Investigation is still running; wait for it to finish "
+                        "before applying its fix."), 409)
+                return self._send_json(error_envelope(
+                    "not_found",
+                    f"No completed report for {inv_id} to fix from"), 404)
+            project_dir = store.request_context(inv_id).get("project_dir") or None
+            outcome = store.engine.apply_fix(report, project_dir,
+                                             dry_run=dry_run)
+            if outcome.get("ok"):
+                return self._send_json(outcome, 200)
+            reason = str(outcome.get("reason", ""))
+            if "verif" in reason.lower() or "running" in reason.lower():
+                return self._send_json(error_envelope(
+                    "bad_state", reason,
+                    "Only a verified diff can be applied; re-run the "
+                    "investigation if the files changed."), 409)
+            if "disabled" in reason.lower():
+                return self._send_json(error_envelope(
+                    "forbidden", reason,
+                    "Set TRACE_ALLOW_FILE_EDITS=1 to enable safe auto-fix."), 403)
+            if "no fix" in reason.lower():
+                return self._send_json(error_envelope(
+                    "bad_state", reason), 409)
+            return self._send_json(error_envelope(
+                "bad_state", reason or "Fix could not be applied.",
+                "; ".join(outcome.get("warnings", []) or "")), 409)
 
         def do_OPTIONS(self):
             self.send_response(204)

@@ -43,6 +43,14 @@ class TraceConfig:
     history_enabled: bool = True
     history_dir: str | None = None  # None → default_history_dir()
     history_max_entries: int = 500
+    # Safe auto-fix: when True, a verified unified diff may be written back to
+    # files inside the project root (with a .trace-bak backup per file).
+    # Unverified diffs are NEVER written. Disable with TRACE_ALLOW_FILE_EDITS=0.
+    allow_file_edits: bool = True
+    # Test execution is opt-in only (TRACE_ALLOW_TESTS=1): even then, only the
+    # allowlisted runner from code_tools.detect_test_command is ever executed.
+    # Project scripts are never executed.
+    allow_test_execution: bool = False
 
     @classmethod
     def from_env(cls) -> "TraceConfig":
@@ -58,6 +66,12 @@ class TraceConfig:
             not in ("0", "false", "no", "off"),
             history_max_entries=int(os.environ.get("TRACE_HISTORY_MAX", "500")),
             history_dir=os.environ.get("TRACE_HISTORY_DIR") or None,
+            allow_file_edits=os.environ.get(
+                "TRACE_ALLOW_FILE_EDITS", "1").strip().lower()
+            not in ("0", "false", "no", "off"),
+            allow_test_execution=os.environ.get(
+                "TRACE_ALLOW_TESTS", "0").strip().lower()
+            in ("1", "true", "yes", "on"),
         )
 
     def validate(self) -> list[str]:
@@ -83,6 +97,8 @@ class TraceConfig:
             "max_context_chars": self.max_context_chars,
             "bind_host": self.bind_host,
             "bind_port": self.bind_port,
+            "allow_file_edits": self.allow_file_edits,
+            "allow_test_execution": self.allow_test_execution,
             "cloud_note": (
                 f"Model {self.ollama_model!r} may process submitted context "
                 "through Ollama's cloud service; it is not local-only."
