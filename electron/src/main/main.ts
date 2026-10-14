@@ -392,20 +392,6 @@ async function runInvestigation(text: string, opts: Record<string, unknown>, fol
   }
 }
 
-function movePerch(position: string): void {
-  const next = settings.setPosition(cfg, position);
-  if (next === cfg) return;
-  setCfg(next);
-  if (!charWin || charWin.isDestroyed()) return;
-  try {
-    const [w, h] = charWin.getSize();
-    const at = perchPos(w, h);
-    charWin.setPosition(at.x, at.y);
-  } catch {
-    /* ignore */
-  }
-}
-
 function buildTray(): void {
   const dot = (color: string): Electron.NativeImage => {
     const svg =
@@ -414,43 +400,16 @@ function buildTray(): void {
       `<circle cx="8" cy="8" r="5" fill="${color}"/></svg>`;
     return nativeImage.createFromDataURL("data:image/svg+xml;base64," + Buffer.from(svg).toString("base64"));
   };
-  const statusLabel = (): string => {
-    try {
-      const d = settings.describe(cfg, Date.now());
-      if (d.disabled) return "Trace is off";
-      if (d.paused) return "Hushed (" + d.label + ")";
-      if (d.quiet) return "Quiet hours — watching silently";
-    } catch {
-      /* ignore */
-    }
-    return "Trace is ready";
-  };
   const refresh = (): void => {
     if (!tray) return;
     try {
       const menu = Menu.buildFromTemplate([
-        { label: statusLabel(), enabled: false },
+        { label: run ? "Trace is working…" : "Trace is ready", enabled: false },
         { type: "separator" },
         { label: "Show Trace", click: () => { try { charWin && charWin.show(); } catch { /* ignore */ } } },
         { label: "Open results", click: () => showResults() },
         { label: "Check for updates", enabled: app.isPackaged, click: () => { void autoUpdater.checkForUpdates().catch(() => undefined); } },
         { type: "separator" },
-        { label: "Hush 10 min", click: () => setCfg(settings.pauseMinutes(cfg, 10, Date.now())) },
-        { label: "Resume now", click: () => setCfg(settings.resume(cfg)) },
-        {
-          label: "Perch",
-          submenu: (settings.NEO_POSITIONS as string[]).map((p) => ({
-            label: p,
-            type: "radio" as const,
-            checked: placement.sanitisePosition(cfg.position) === p,
-            click: () => movePerch(p),
-          })),
-        },
-        { type: "separator" },
-        {
-          label: cfg.disabled ? "Turn Trace on" : "Turn Trace off",
-          click: () => setCfg(settings.setDisabled(cfg, !cfg.disabled)),
-        },
         { label: "Quit Trace", click: () => { try { app.exit(0); } catch { /* ignore */ } } },
       ]);
       tray.setContextMenu(menu);
