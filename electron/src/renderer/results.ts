@@ -1,7 +1,8 @@
-// Results renderer: builds Diagnosis / Locations / Fix / Evidence from the
-// backend InvestigationStatus. Incomplete states render as honest banners.
-// Findings split into verified locations vs unverified hypotheses. Nothing
-// is ever synthesized: missing excerpts/diffs render as missing.
+// Results console: a tabbed dev-tool workspace (Answer / Code & Diff /
+// Evidence) built from the backend InvestigationStatus. Incomplete states
+// render as honest banners with a skeleton shimmer. Findings split into
+// verified locations vs unverified hypotheses. Nothing is ever synthesized:
+// missing excerpts/diffs render as missing.
 // Import-free on purpose (see trace-api.d.ts): RendererFinding /
 // RendererStatus are renderer-owned structural copies of the contract.
 
@@ -9,11 +10,14 @@ const root = document.querySelector("#root") as HTMLElement;
 let activeInvestigation = "";
 let followUpBusy = false;
 let mount: HTMLElement = root;
+let activeTab = "answer";
 
 function appHeader(status: RendererStatus): HTMLElement {
   const header = el("header", "app-header");
+  header.setAttribute("data-section", "header");
   const brand = el("div", "brand");
-  brand.append(el("span", "brand-mark", "✦"), el("span", "brand-name", "Trace"));
+  brand.append(el("span", "brand-mark", "✦"), el("span", "brand-name", "Trace"),
+    el("span", "brand-sub", status.investigation_id || ""));
   const state = status.status === "done" ? "Ready" : status.status === "running" ? "Working" : "Needs attention";
   header.append(brand, el("span", `state-pill ${status.status}`, state));
   return header;
@@ -91,6 +95,28 @@ function codeBlock(code: string): HTMLElement {
   return pre;
 }
 
+function diffBlock(diff: string): HTMLElement {
+  // Unified-diff viewer: added/removed/hunk lines get their own wash.
+  const pre = document.createElement("pre");
+  pre.className = "code";
+  for (const raw of diff.split("\n")) {
+    const line = document.createElement("span");
+    const first = raw.charAt(0);
+    if ((first === "+" && raw.slice(0, 3) !== "+++") || (first === "-" && raw.slice(0, 3) !== "---")) {
+      line.className = first === "+" ? "dl add" : "dl del";
+      line.textContent = raw;
+    } else if (raw.slice(0, 2) === "@@") {
+      line.className = "dl hunk";
+      line.textContent = raw;
+    } else {
+      line.textContent = raw;
+    }
+    pre.appendChild(line);
+    pre.appendChild(document.createTextNode("\n"));
+  }
+  return pre;
+}
+
 function fixedLines(diff: string): string {
   const added = diff.split("\n")
     .filter((line) => line.startsWith("+") && !line.startsWith("+++"))
@@ -155,7 +181,7 @@ function findingCard(f: RendererFinding): HTMLElement {
   const top = el("div", "top");
   top.appendChild(el("span", "title", f.title || "Finding"));
   top.appendChild(el("span", f.verified ? "verified" : "unverified",
-    f.verified ? "verified" : "unverified — hypothesis"));
+    f.verified ? "✓ verified" : "unverified — hypothesis"));
   card.appendChild(top);
 
   const loc = el("div", "loc");
@@ -179,7 +205,7 @@ function findingCard(f: RendererFinding): HTMLElement {
   if (f.code_excerpt) card.appendChild(codeBlock(f.code_excerpt));
   else if (f.verified) card.appendChild(el("p", "note warn", "Excerpt unavailable."));
   if (f.evidence) {
-    card.appendChild(el("p", "evlabel", "Evidence:"));
+    card.appendChild(el("p", "evlabel", "Evidence"));
     card.appendChild(el("p", "", f.evidence));
   }
   if (f.git_context) card.appendChild(el("p", "gitctx", f.git_context));
@@ -215,6 +241,28 @@ function banner(text: string, kind: "error" | "info"): void {
   mount.appendChild(b);
 }
 
+function skeleton(): void {
+  const s = el("div", "skeleton");
+  s.append(el("div", "sk w80"), el("div", "sk"), el("div", "sk w60"),
+    el("div", "sk tall"));
+  mount.appendChild(s);
+}
+
+function tabbar(tabs: [string, string][], onPick: (id: string) => void): HTMLElement {
+  const bar = el("nav", "tabbar");
+  bar.setAttribute("data-section", "tabs");
+  bar.setAttribute("role", "tablist");
+  for (const [id, label] of tabs) {
+    const b = el("button", "tab" + (id === activeTab ? " active" : ""), label) as HTMLButtonElement;
+    b.setAttribute("role", "tab");
+    if (id === activeTab) b.setAttribute("aria-selected", "true");
+    b.addEventListener("click", () => onPick(id));
+    (b as HTMLButtonElement & { dataset: DOMStringMap }).dataset.tab = id;
+    bar.appendChild(b);
+  }
+  return bar;
+}
+
 function followUpBox(parentId: string): void {
   const section = el("section", "follow-up");
   section.appendChild(el("h2", "", "Keep exploring"));
@@ -248,7 +296,7 @@ function followUpBox(parentId: string): void {
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submit(); }
   });
-  row.append(input, send); section.append(row, note); root.appendChild(section);
+  row.append(input, send); section.append(row, note); mount.appendChild(section);
 }
 
 function h1(t: string): void {
@@ -284,6 +332,7 @@ function render(status: RendererStatus): void {
   }
   if (status.status === "running") {
     banner(`Investigation still running (stage: ${status.stage || "?"}). Results will appear when it finishes.`, "info");
+    skeleton();
     return;
   }
   if (status.status === "error" || !status.report) {
@@ -294,30 +343,47 @@ function render(status: RendererStatus): void {
   const verified = r.findings.filter((f) => f.verified);
   const hypo = r.findings.filter((f) => !f.verified);
   const fix = r.recommended_fix;
+
+  const tabs: [string, string][] = [["answer", "Answer"], ["code", "Code & Diff"], ["evidence", "Evidence"]];
+  if (!tabs.some(([id]) => id === activeTab)) activeTab = "answer";
+  const panels: Record<string, HTMLElement> = {};
+  const pick = (id: string): void => {
+    activeTab = id;
+    for (const [tid] of tabs) {
+      const on = tid === id;
+      panels[tid].classList.toggle("active", on);
+      const btn = root.querySelector(`[data-tab="${tid}"]`);
+      if (btn) {
+        btn.classList.toggle("active", on);
+        if (on) btn.setAttribute("aria-selected", "true");
+        else btn.removeAttribute("aria-selected");
+      }
+    }
+  };
+  root.appendChild(tabbar(tabs, pick));
+
+  // --- Answer tab: the verdict up front ---
+  const answer = el("section", "tabpanel" + (activeTab === "answer" ? " active" : ""));
+  panels.answer = answer; root.appendChild(answer); mount = answer;
   h1("Quick answer");
   mount.appendChild(el("p", `badge ${r.confidence}`, `confidence: ${r.confidence}`));
-  para(shortText(r.root_cause || r.summary || "Trace could not identify the cause."));
+  para(shortText(r.root_cause || r.summary || "Trace could not identify the cause."), "answer-lead");
   if (verified.length) para(verified.map((f) => locationLabel(f)).join(" · "), "quick-location");
-
-  h1("Fix");
-  if (fix?.description) para(shortText(fix.description));
   if (r.fix_applied && r.fix_applied.applied) {
     para(`Fixed directly in: ${(r.fix_applied.applied_files || []).join(", ") || "the files"}. Backups kept (*.trace-bak).`);
   }
+  h1("Fix");
+  if (fix?.description) para(shortText(fix.description));
   if (fix?.diff) {
     mount.appendChild(copyBox(fixedLines(fix.diff)));
     if (fix.diff_verified === false) mount.appendChild(el("p", "note warn", "Review these lines against the current file before applying."));
     else mount.appendChild(applyBox(activeInvestigation, fix.diff_verified === true));
   } else para("No fixed lines were proposed yet.", "muted");
+  if (activeInvestigation) followUpBox(activeInvestigation);
 
-  const details = document.createElement("details");
-  details.className = "details";
-  details.appendChild(el("summary", "details-summary", "Show full investigation details"));
-  const detailBody = el("div", "details-body");
-  details.appendChild(detailBody);
-  root.appendChild(details);
-  mount = detailBody;
-
+  // --- Code & Diff tab: full investigation depth ---
+  const code = el("section", "tabpanel" + (activeTab === "code" ? " active" : ""));
+  panels.code = code; root.appendChild(code); mount = code;
   h1("Diagnosis");
   para(r.summary || "No summary provided.");
   h2("Most likely root cause");
@@ -332,17 +398,22 @@ function render(status: RendererStatus): void {
   else para("No fix proposed — the evidence does not support one yet.", "muted");
   if (fix?.diff) {
     h2(fix.diff_verified ? "Proposed patch (verified — safe to apply)" : "Proposed patch (unverified — review only)");
-    mount.appendChild(codeBlock(fix.diff));
+    mount.appendChild(diffBlock(fix.diff));
     mount.appendChild(applyBox(activeInvestigation, fix.diff_verified === true));
   }
   if (fix?.rationale) para(fix.rationale);
   if (r.alternative_hypotheses?.length) { h2("Alternative hypotheses"); mount.appendChild(bulletList(r.alternative_hypotheses)); }
+
+  // --- Evidence tab: everything behind the verdict ---
+  const ev = el("section", "tabpanel" + (activeTab === "evidence" ? " active" : ""));
+  panels.evidence = ev; root.appendChild(ev); mount = ev;
   h1("Investigation evidence");
   if (r.evidence_summary) para(r.evidence_summary);
+  else para("No evidence summary was recorded.", "muted");
   if (r.needs_more_info?.length) { h2("Missing information"); mount.appendChild(bulletList(r.needs_more_info)); }
   if (r.warnings?.length) { h2("Warnings"); mount.appendChild(bulletList(r.warnings, "warn-item")); }
+
   mount = root;
-  if (activeInvestigation) followUpBox(activeInvestigation);
 }
 
 window.trace.onReport((status) => {
