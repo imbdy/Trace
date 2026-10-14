@@ -1,7 +1,7 @@
 <!doctype html>
-<!-- Trace character window: Neo's leaf design, transplanted and rebranded.
-     Same 336px black box hanging off the top edge: face row on top (always
-     visible), investigation notes unfolding below on demand. -->
+<!-- Trace command bar: a premium glass debugging console hanging off the top
+     edge. Face row on top (always visible), investigation workspace unfolding
+     below on demand. -->
 <html>
 <head>
 <meta charset="utf-8">
@@ -17,7 +17,7 @@
   <div id="sill">
     <div id="leaf" aria-hidden="false" aria-label="Trace">
       <div id="face-row">
-        <div id="hearth-wrap" title="Trace — click to open, double-click opens the results">
+        <div id="hearth-wrap" title="Trace — click to open">
           <canvas id="hearth" width="288" height="288"></canvas>
           <div id="badge" hidden></div>
         </div>
@@ -29,10 +29,9 @@
           <div id="leaf-sub">ready to debug</div>
         </div>
         <div id="face-btns">
-          <button id="leaf-fold" type="button" title="fold the leaf (esc)">fold</button>
+          <button id="leaf-fold" type="button" title="fold the panel (esc)">fold</button>
         </div>
       </div>
-      <div id="murmur" aria-live="polite"></div>
       <div id="leaf-body" aria-hidden="true">
         <div id="ask">
           <textarea id="ask-text" rows="2" spellcheck="false"
@@ -63,11 +62,9 @@
           <button id="ctl-results" type="button">Results</button>
           <button id="ctl-hide" type="button" title="hide Trace entirely — the tray brings him back">Tuck away</button>
         </div>
-        <div id="leaf-foot">click to open · double-click for results · Esc to fold</div>
       </div>
     </div>
   </div>
-  <div id="debug" hidden><span id="fps">-- fps</span><span id="mood">idle</span><span id="state">idle</span></div>
 </div>
 <script src="hearthling.js"></script>
 <script src="leaf.js"></script>
