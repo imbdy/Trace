@@ -16,17 +16,17 @@ import tkinter as tk
 from .character import CharacterState, stage_label
 
 BG_KEY = "#ff00ff"  # transparent color key
-BODY = "#0b0b0e"
-BODY_EDGE = "#232329"
+BODY = "#0d1119"
+BODY_EDGE = "#2c3a55"
 FACE = "#f5f5f7"
-EYE = "#0b0b0e"
-MUTED = "#8e8e96"
-TEXT_FG = "#ececf1"
-TEAL = "#4fd1c5"
-GREEN = "#43d17c"
-RED = "#e5484d"
-AMBER = "#e8a13c"
-PANEL_BG = "#141419"
+EYE = "#0b0e14"
+MUTED = "#8f99b3"
+TEXT_FG = "#eef2fa"
+TEAL = "#9db9ff"
+GREEN = "#6fce95"
+RED = "#ff8a8a"
+AMBER = "#e0c05b"
+PANEL_BG = "#111724"
 
 BODY_W = 880
 BODY_H = 150
@@ -149,7 +149,7 @@ class Companion:
         # halo: layered dark outlines suggesting the reference glow
         self._halos = [
             c.create_oval(0, 0, 1, 1, outline="#1c1c22", width=6),
-            c.create_oval(0, 0, 1, 1, outline="#26262e", width=3),
+            c.create_oval(0, 0, 1, 1, outline="#26314a", width=3),
         ]
         self._blob = _rounded(c, 0, 0, 1, 1, 40, fill=FACE, outline="")
         self._arm = c.create_line(0, 0, 1, 1, fill=FACE, width=22,
@@ -158,7 +158,7 @@ class Companion:
         self._eye_l = c.create_oval(0, 0, 1, 1, fill=EYE, outline="")
         self._eye_r = c.create_oval(0, 0, 1, 1, fill=EYE, outline="")
         # progress line (thin bar, NOT a three-dot indicator)
-        self._pbg = c.create_line(0, 0, 1, 1, fill="#26262e", width=3)
+        self._pbg = c.create_line(0, 0, 1, 1, fill="#26314a", width=3)
         self._pfg = c.create_line(0, 0, 1, 1, fill=TEAL, width=3)
         self._stage = c.create_text(0, 0, text="", fill=MUTED,
                                     font=("Segoe UI", 10), anchor="sw")
@@ -174,7 +174,7 @@ class Companion:
 
     def _make_button(self, name: str, x: int, y: int, s: int):
         c = self.canvas
-        bg = _rounded(c, x, y, x + s, y + s, 13, fill="#17171c", outline="")
+        bg = _rounded(c, x, y, x + s, y + s, 13, fill="#1a2233", outline="")
         glyphs = []
         cx, cy = x + s / 2, y + s / 2
         if name == "home":  # house: square + roof
@@ -227,13 +227,13 @@ class Companion:
         side = tk.Frame(self.panel_frame, bg=PANEL_BG)
         side.pack(side="right", fill="y", padx=(4, 10), pady=8)
         self.send_btn = tk.Button(side, text="Send", command=self._send,
-                                  bg=TEAL, fg="#062a28", relief="flat",
+                                  bg=TEAL, fg="#0b0e14", relief="flat",
                                   font=("Segoe UI", 10, "bold"),
                                   activebackground=TEAL, width=9)
         self.send_btn.pack(fill="x", pady=(0, 6))
         self.cancel_btn = tk.Button(side, text="Cancel", command=self._cancel,
-                                    bg="#2a2a31", fg=TEXT_FG, relief="flat",
-                                    font=("Segoe UI", 10), activebackground="#3a3a44",
+                                    bg="#1b2334", fg=TEXT_FG, relief="flat",
+                                    font=("Segoe UI", 10), activebackground="#27314a",
                                     width=9, state="disabled")
         self.cancel_btn.pack(fill="x")
         self.auto_fix_var = tk.BooleanVar(value=False)
@@ -429,7 +429,7 @@ class Companion:
             for name, b in self._btns.items():
                 active = f"btn-{name}" in tags
                 self.canvas.itemconfigure(b["bg"],
-                                          fill="#26262e" if active else "#17171c")
+                                          fill="#26314a" if active else "#1a2233")
             self.canvas.configure(cursor="hand2" if any(
                 t.startswith("btn-") for t in tags) else "")
         except Exception:
