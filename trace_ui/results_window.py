@@ -16,15 +16,15 @@ from tkinter import ttk
 
 from .result_model import ResultView, build_result_view
 
-BG = "#101014"
-PANEL = "#17171d"
-FG = "#ececf1"
-MUTED = "#9a9aa3"
-ACCENT = "#4fd1c5"
-GREEN = "#43d17c"
-AMBER = "#e8a13c"
-RED = "#e5484d"
-CODE_BG = "#0b0b0f"
+BG = "#0a0d13"
+PANEL = "#141b29"
+FG = "#eef2fa"
+MUTED = "#9aa3b8"
+ACCENT = "#9db9ff"
+GREEN = "#6fce95"
+AMBER = "#e0c05b"
+RED = "#ff8a8a"
+CODE_BG = "#070a10"
 CONF_COLORS = {"high": GREEN, "medium": AMBER, "low": MUTED}
 
 KEYWORDS = ("def|class|return|if|elif|else|for|while|import|from|as|with|try|"
@@ -262,7 +262,7 @@ class ResultsWindowManager:
 
     def _finding(self, parent, f, verified: bool):
         card = tk.Frame(parent, bg=PANEL, highlightthickness=1,
-                        highlightbackground="#2a2a33")
+                        highlightbackground="#2b3a58")
         card.pack(fill="x", padx=16, pady=6)
         top = tk.Frame(card, bg=PANEL)
         top.pack(fill="x", padx=10, pady=(8, 2))
@@ -283,7 +283,7 @@ class ResultsWindowManager:
             btn = tk.Button(loc, text=f"Open at line {f.start_line or '?'}",
                             command=lambda p=f.file_path, ln=f.start_line:
                             self._open(p, ln),
-                            bg="#26262e", fg=FG, relief="flat",
+                            bg="#1f2940", fg=FG, relief="flat",
                             font=("Segoe UI", 9))
             btn.pack(side="right", padx=(8, 0))
         note = f.verification_note
@@ -319,7 +319,7 @@ class ResultsWindowManager:
 
     def _code(self, parent, code: str, lang: str = ""):
         f = tk.Frame(parent, bg=CODE_BG, highlightthickness=1,
-                     highlightbackground="#2a2a33")
+                     highlightbackground="#2b3a58")
         f.pack(fill="x", padx=10, pady=6)
         t = tk.Text(f, wrap="none", bg=CODE_BG, fg="#e5e7eb", relief="flat",
                     highlightthickness=0, font=("Consolas", 10), height=1,
@@ -371,7 +371,7 @@ class ResultsWindowManager:
                                  fg=AMBER)
 
         tk.Button(row, text="Apply fix to files (backup kept)",
-                  command=_apply, bg="#26262e", fg=FG, relief="flat",
+                  command=_apply, bg="#1f2940", fg=FG, relief="flat",
                   font=("Segoe UI", 9, "bold"),
                   state="normal" if view.fix_diff_verified else "disabled").pack(
                       side="right")
