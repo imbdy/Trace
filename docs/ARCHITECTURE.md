@@ -5,11 +5,12 @@ except the composition roots, which only wire startup (never business logic).
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│ 1. Trace desktop character  ··· electron/src/renderer/  │
-│    your request and character interactions              │
-│    Neo's leaf design, transplanted: hearthling.js face  │
-│    (verbatim), shell/leaf chrome (adapted), trace.js    │
-│    driver; composer + progress stitch + verdict         │
+│ 1. Trace command bar  ······ electron/src/renderer/neo/ │
+│    your request and investigation progress              │
+│    hearthling.js face (verbatim Neo primitives) inside  │
+│    a custom glass console: shell.js chrome, leaf.js     │
+│    progress rail, trace.js driver; composer + stitch +  │
+│    verdict. No ambient chatter, no poke/tuck gimmicks.  │
 └──────────────────────────┬──────────────────────────────┘
                            │ plain-language request (preload bridge → IPC)
                            ▼
@@ -39,10 +40,11 @@ except the composition roots, which only wire startup (never business logic).
                            │ verified report
                            ▼
 ┌─────────────────────────────────────────────────────────┐
-│ 5. Investigation report window · renderer/results.*     │
-│    Cause · Exact lines · Explanation · Proposed fix     │
-│    renders backend status JSON; backend reached only    │
-│    through the preload bridge (open-file)               │
+│ 5. Investigation results console · renderer/results.*   │
+│    Tabbed dev-tool workspace: Answer · Code & Diff ·    │
+│    Evidence. Renders backend status JSON; backend is    │
+│    reached only through the preload bridge (open-file,  │
+│    apply-fix, follow-up, history).                      │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -57,7 +59,7 @@ except the composition roots, which only wire startup (never business logic).
 | Code intelligence is grounded | `code_tools` ← only `project_inspector`; search/outline/tests never execute project scripts (tests run only the allowlisted runner, opt-in) |
 | Safe fixer is grounded | `code_fixer` ← only `project_inspector` + `validator`; only verified hunks are written, always with `*.trace-bak` backups |
 | Transport is dumb | `traceApi.ts` is fetch-only HTTP (start/stream/cancel/open-file/apply-fix); renderer files are import-free plain scripts behind the preload bridge |
-| L1 Neo craft, Trace wiring | character renderer uses the bridge + Neo's spring/eye/poke/tuck code; no backend URLs, no model access, no Neoma (enforced by `tests/test_frontend_guards.py`, incl. face-verbatim fidelity) |
+| L1 Face craft, Trace console | face renderer keeps Neo's spring/eye primitives (verbatim fidelity); the console chrome is Trace's own — composer, progress rail, verdict — no backend URLs, no model access, no Neoma (enforced by `tests/test_frontend_guards.py`) |
 | L5 renders backend JSON | results renderer builds Diagnosis/Locations/Fix/Evidence from status JSON; incomplete states render as honest banners; Apply-fix calls the backend endpoint |
 | Single bridge | Only composition roots (`electron/src/main/main.ts` spawn + IPC, `trace_ui/app.py`, `main.py` CLI) reference both sides, for startup wiring only |
 
