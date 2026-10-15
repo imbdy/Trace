@@ -150,6 +150,8 @@ installer, and publishes the release assets.
 python -m unittest discover -s tests -v
 ```
 
+For the desktop renderer, run `npm test` from `electron` as well.
+
 Covers: file/line verification, report parsing/malformed output, Ollama
 failures (refused/timeout/auth/model-missing/cancel/streaming), pipeline
 cancellation, missing-project honesty, screenshot temp cleanup, inspector
