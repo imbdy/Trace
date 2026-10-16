@@ -92,6 +92,54 @@ class TestEngine(unittest.TestCase):
         self.assertTrue(app_findings and app_findings[0].verified)
         self.assertIn("def boom", app_findings[0].code_excerpt)
 
+    def test_explain_mode_skips_error_extraction(self):
+        engine, ollama = self._engine()
+        with mock.patch.object(eng_mod, "collect_diagnostics", return_value=[]), \
+                mock.patch.object(eng_mod, "extract_error_info") as mock_extract:
+            req = InvestigationRequest(
+                request_text="How does app.py work?",
+                project_dir=str(self.root), include_screenshot=False,
+                investigation_type="explain")
+            report = engine.investigate(req)
+        # Error extraction must not be called in explain mode.
+        mock_extract.assert_not_called()
+        self.assertIsInstance(report, InvestigationReport)
+        # The model was called with the explain system prompt, not the debug one.
+        self.assertEqual(ollama.calls, 1)
+        system_msg = ollama.last_messages[0]
+        self.assertEqual(system_msg["role"], "system")
+        self.assertIn("code-explanation assistant", system_msg["content"])
+        self.assertNotIn("unified diff", system_msg["content"])
+
+    def test_explain_mode_does_not_run_tests(self):
+        engine, _ = self._engine()
+        with mock.patch.object(eng_mod, "collect_diagnostics", return_value=[]), \
+                mock.patch.object(eng_mod, "run_project_tests") as mock_tests:
+            req = InvestigationRequest(
+                request_text="Explain the code in app.py",
+                project_dir=str(self.root), include_screenshot=False,
+                investigation_type="explain", run_tests=True)
+            report = engine.investigate(req)
+        # run_tests must be ignored in explain mode.
+        mock_tests.assert_not_called()
+        self.assertIsInstance(report, InvestigationReport)
+
+    def test_explain_mode_reads_files_and_reports(self):
+        engine, ollama = self._engine()
+        with mock.patch.object(eng_mod, "collect_diagnostics", return_value=[]):
+            req = InvestigationRequest(
+                request_text="Explain what boom() does in app.py",
+                project_dir=str(self.root), include_screenshot=False,
+                investigation_type="explain")
+            report = engine.investigate(req)
+        self.assertIsInstance(report, InvestigationReport)
+        # The model was called with the explain system prompt.
+        self.assertEqual(ollama.calls, 1)
+        system_msg = ollama.last_messages[0]
+        self.assertEqual(system_msg["role"], "system")
+        self.assertIn("code-explanation assistant", system_msg["content"])
+        self.assertNotIn("unified diff", system_msg["content"])
+
     def test_cancellation_before_model(self):
         engine, _ = self._engine(delay=2.0)
         req = InvestigationRequest(request_text="hang?", project_dir=str(self.root),

@@ -12,6 +12,7 @@ export interface StartRequest {
   extra_context?: string;
   auto_fix?: boolean;
   run_tests?: boolean;
+  investigation_type?: "debug" | "explain";
 }
 
 export interface ProgressEvent {
