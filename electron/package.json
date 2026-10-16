@@ -1,6 +1,6 @@
 {
   "name": "trace-desktop",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "author": "imbdy",
   "description": "Trace independent debugging companion (Electron frontend, Python backend)",
@@ -45,7 +45,11 @@
       "createDesktopShortcut": true,
       "shortcutName": "Trace"
     },
-    "files": ["dist/**/*", "package.json", "package-lock.json"],
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "package-lock.json"
+    ],
     "extraResources": [
       {
         "from": "../assets/icons",
