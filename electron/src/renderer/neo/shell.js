@@ -30,6 +30,13 @@
     s = String(s || ''); max = max || 90;
     return s.length <= max ? s : s.slice(0, max - 1).trimEnd() + '…';
   }
+  function currentMode() {
+    try {
+      var sel = document.querySelector('#ask-mode input[name="investigation_type"]:checked');
+      if (sel && (sel.value === 'debug' || sel.value === 'explain')) return sel.value;
+    } catch (e) {}
+    return 'debug';
+  }
 
   /* ---- window geometry: hug the visible sill ---- */
   function requestFit() {
@@ -205,6 +212,17 @@
     if (s) s.disabled = !on;
     if (c) c.disabled = on;
   }
+  // Mode toggle: reflect it in the ambient line so the creature never
+  // pretends to debug when the user asked for an explanation (and vice versa).
+  try {
+    var modeRadios = document.querySelectorAll('#ask-mode input[name="investigation_type"]');
+    for (var m = 0; m < modeRadios.length; m++) {
+      modeRadios[m].addEventListener('change', function () {
+        var mode = currentMode();
+        note(mode === 'explain' ? 'ready to explain' : 'ready to debug', true);
+      });
+    }
+  } catch (e) {}
   wire('leaf-fold', function () { api.collapse(); });
   // Submit/cancel go through TraceDriver (trace.js), never straight to the
   // bridge: the driver owns `running`, which is what enables Cancel while an
@@ -218,7 +236,7 @@
       var box = document.getElementById('ask-fix');
       autoFix = !!(box && box.checked);
     } catch (e) {}
-    var opts = autoFix ? { autoFix: true } : {};
+    var opts = { autoFix: autoFix, investigation_type: currentMode() };
     if (d && typeof d.submit === 'function') return d.submit(text, opts);
     if (window.trace && window.trace.submit) return window.trace.submit(text, opts);
     return Promise.resolve({ ok: false, reason: 'no-bridge' });

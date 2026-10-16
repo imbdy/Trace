@@ -19,7 +19,10 @@ function appHeader(status: RendererStatus): HTMLElement {
   brand.append(el("span", "brand-mark", "✦"), el("span", "brand-name", "Trace"),
     el("span", "brand-sub", status.investigation_id || ""));
   const state = status.status === "done" ? "Ready" : status.status === "running" ? "Working" : "Needs attention";
-  header.append(brand, el("span", `state-pill ${status.status}`, state));
+  const mode = String(status.investigation_type || "debug") === "explain" ? "Explain" : "Debug";
+  header.append(brand,
+    el("span", `state-pill ${status.status}`, state),
+    el("span", `state-pill mode-${String(status.investigation_type || "debug")}`, mode));
   return header;
 }
 
@@ -362,6 +365,7 @@ function render(status: RendererStatus): void {
   };
   root.appendChild(tabbar(tabs, pick));
 
+  const isExplain = String(status.investigation_type || "debug") === "explain";
   // --- Answer tab: the verdict up front ---
   const answer = el("section", "tabpanel" + (activeTab === "answer" ? " active" : ""));
   panels.answer = answer; root.appendChild(answer); mount = answer;
@@ -372,30 +376,34 @@ function render(status: RendererStatus): void {
   if (r.fix_applied && r.fix_applied.applied) {
     para(`Fixed directly in: ${(r.fix_applied.applied_files || []).join(", ") || "the files"}. Backups kept (*.trace-bak).`);
   }
-  h1("Fix");
-  if (fix?.description) para(shortText(fix.description));
-  if (fix?.diff) {
-    mount.appendChild(copyBox(fixedLines(fix.diff)));
-    if (fix.diff_verified === false) mount.appendChild(el("p", "note warn", "Review these lines against the current file before applying."));
-    else mount.appendChild(applyBox(activeInvestigation, fix.diff_verified === true));
-  } else para("No fixed lines were proposed yet.", "muted");
+  if (!isExplain || fix?.description || fix?.diff) {
+    h1("Fix");
+    if (fix?.description) para(shortText(fix.description));
+    if (fix?.diff) {
+      mount.appendChild(copyBox(fixedLines(fix.diff)));
+      if (fix.diff_verified === false) mount.appendChild(el("p", "note warn", "Review these lines against the current file before applying."));
+      else mount.appendChild(applyBox(activeInvestigation, fix.diff_verified === true));
+    } else if (!isExplain) para("No fixed lines were proposed yet.", "muted");
+  }
   if (activeInvestigation) followUpBox(activeInvestigation);
 
   // --- Code & Diff tab: full investigation depth ---
   const code = el("section", "tabpanel" + (activeTab === "code" ? " active" : ""));
   panels.code = code; root.appendChild(code); mount = code;
-  h1("Diagnosis");
+  h1(isExplain ? "Overview" : "Diagnosis");
   para(r.summary || "No summary provided.");
-  h2("Most likely root cause");
+  h2(isExplain ? "What this code does" : "Most likely root cause");
   para(r.root_cause || "Unknown.");
   if (r.confidence_rationale) { h2("Why — evidence"); para(r.confidence_rationale); }
   h1("Exact source locations");
   if (verified.length) verified.forEach((f) => mount.appendChild(findingCard(f)));
   else para("No verified source locations. The evidence was not sufficient to pin the bug to a file and line.", "muted");
   if (hypo.length) { h2("Unverified hypotheses — not confirmed"); hypo.forEach((f) => mount.appendChild(findingCard(f))); }
-  h1("Proposed solution");
-  if (fix?.description) para(fix.description);
-  else para("No fix proposed — the evidence does not support one yet.", "muted");
+  if (!isExplain || fix?.description || fix?.diff) {
+    h1("Proposed solution");
+    if (fix?.description) para(fix.description);
+    else if (!isExplain) para("No fix proposed — the evidence does not support one yet.", "muted");
+  }
   if (fix?.diff) {
     h2(fix.diff_verified ? "Proposed patch (verified — safe to apply)" : "Proposed patch (unverified — review only)");
     mount.appendChild(diffBlock(fix.diff));

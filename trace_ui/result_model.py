@@ -51,6 +51,9 @@ class ResultView:
     fix_diff_verified: bool = False
     # Populated when auto_fix wrote the diff to disk (files + .trace-bak).
     fix_applied: dict | None = None
+    # "debug" (default) or "explain": echoed from the request so the results
+    # window can tailor the verdict view (e.g. no fix/apply sections).
+    investigation_type: str = "debug"
     alternative_hypotheses: list[str] = field(default_factory=list)
     needs_more_info: list[str] = field(default_factory=list)
     evidence_summary: str = ""
@@ -156,6 +159,8 @@ def _build(status: dict) -> ResultView:
         fix_rationale=_s(rec.get("rationale", ""), 2000),
         fix_diff_verified=bool(rec.get("diff_verified", False)),
         fix_applied=fix_applied if isinstance(fix_applied, dict) else None,
+        investigation_type=str(status.get("investigation_type", "debug")
+                               or "debug"),
         alternative_hypotheses=[_s(h, 2000) for h in
                                 (report.get("alternative_hypotheses", []) or [])][:10],
         needs_more_info=[_s(n, 1000) for n in

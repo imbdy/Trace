@@ -243,6 +243,18 @@ class Companion:
             activebackground=PANEL_BG, font=("Segoe UI", 8),
             justify="left")
         self.auto_fix_check.pack(fill="x", pady=(6, 0))
+        self.investigation_type_var = tk.StringVar(value="debug")
+        mode_row = tk.Frame(side, bg=PANEL_BG)
+        mode_row.pack(fill="x", pady=(8, 0))
+        tk.Label(mode_row, text="Mode:", bg=PANEL_BG, fg=MUTED,
+                 font=("Segoe UI", 8)).pack(side="left")
+        for value, label in (("debug", "Debug"), ("explain", "Explain")):
+            rb = tk.Radiobutton(mode_row, text=label, value=value,
+                                variable=self.investigation_type_var,
+                                bg=PANEL_BG, fg=TEXT_FG, selectcolor=PANEL_BG,
+                                activebackground=PANEL_BG, font=("Segoe UI", 8),
+                                indicatoron=False, width=7)
+            rb.pack(side="left", padx=(4, 0))
         self.hint = tk.Label(self.panel_frame,
                              text="Enter to send · Shift+Enter newline · Esc folds panel",
                              bg=PANEL_BG, fg=MUTED, font=("Segoe UI", 9))
@@ -375,9 +387,13 @@ class Companion:
             return
         self.input_text.delete("1.0", "end")
         try:
-            self.on_submit(text, self.auto_fix)
+            self.on_submit(text, self.auto_fix,
+                           self.investigation_type_var.get())
         except TypeError:
-            self.on_submit(text)
+            try:
+                self.on_submit(text, self.auto_fix)
+            except TypeError:
+                self.on_submit(text)
 
     def _cancel(self):
         if self.on_cancel is not None and self.running:

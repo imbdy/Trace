@@ -164,7 +164,8 @@ class TraceApp:
     def is_running(self) -> bool:
         return self._worker is not None and self._worker.is_alive()
 
-    def submit(self, text: str, auto_fix: bool = False):
+    def submit(self, text: str, auto_fix: bool = False,
+               investigation_type: str = "debug"):
         if self.is_running:
             self._ui_queue.put(("note", "Already investigating — cancel first."))
             return
@@ -174,9 +175,10 @@ class TraceApp:
                                     "Backend unavailable — start it, then retry."))
                 return
         self._stop.clear()
-        self._worker = threading.Thread(target=self._run_investigation,
-                                        args=(text, bool(auto_fix)), daemon=True,
-                                        name="trace-investigation")
+        self._worker = threading.Thread(
+            target=self._run_investigation,
+            args=(text, bool(auto_fix), str(investigation_type or "debug")),
+            daemon=True, name="trace-investigation")
         self._worker.start()
 
     def cancel(self):
@@ -188,7 +190,8 @@ class TraceApp:
             except Exception:
                 pass
 
-    def _run_investigation(self, text: str, auto_fix: bool = False):
+    def _run_investigation(self, text: str, auto_fix: bool = False,
+                           investigation_type: str = "debug"):
         q = self._ui_queue
         q.put(("running", True))
         try:
@@ -199,6 +202,7 @@ class TraceApp:
                 "screenshot_mode": "active",
                 "include_clipboard": False,
                 "auto_fix": bool(auto_fix),
+                "investigation_type": investigation_type,
             })
         except ApiError as e:
             q.put(("error", self._present(e)))

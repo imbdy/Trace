@@ -176,6 +176,10 @@ class InvestigationStatus:
     stage: str = ""
     report: dict | None = None
     error: dict | None = None
+    # "debug" (default, error-focused pipeline) or "explain" (code-explanation
+    # pipeline): echoed from the request so frontends can tailor the verdict
+    # view (e.g. hide fix/apply sections when there is no fix).
+    investigation_type: str = "debug"
 
     def to_dict(self) -> dict:
         return asdict(self)

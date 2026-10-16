@@ -49,6 +49,7 @@ html, body {
 .state-pill.done { color: var(--green); border-color: rgba(111,206,149,.35); background: rgba(111,206,149,.07); }
 .state-pill.error { color: var(--red); border-color: rgba(255,138,138,.35); background: rgba(255,138,138,.07); }
 .state-pill.running { color: var(--accent-2); border-color: rgba(157,185,255,.35); }
+.state-pill.mode-explain { color: var(--amber); border-color: rgba(224,192,91,.35); background: rgba(224,192,91,.07); }
 
 /* ---- history ---- */
 .history-bar { margin: 14px 0 6px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 14px; background: rgba(157,184,255,.03); }

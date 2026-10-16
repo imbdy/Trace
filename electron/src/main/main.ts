@@ -310,6 +310,8 @@ async function runInvestigation(text: string, opts: Record<string, unknown>, fol
   if (run) return;
   const abort = new AbortController();
   const autoFix = !followUpOf && (opts.autoFix === true || (opts as { auto_fix?: boolean }).auto_fix === true);
+  const investigationType =
+    (opts.investigation_type === "explain" ? "explain" : "debug");
   try {
     const id = followUpOf
       ? await api.followUp(followUpOf, text)
@@ -320,6 +322,7 @@ async function runInvestigation(text: string, opts: Record<string, unknown>, fol
           screenshot_mode: "active",
           include_clipboard: false,
           auto_fix: autoFix,
+          investigation_type: investigationType,
         });
     run = { id, abort };
     emitStage({ investigation_id: id, stage: "receive", message: "Sending request…", progress: 0.02 });

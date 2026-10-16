@@ -3,7 +3,7 @@
 import unittest
 
 from trace_backend.investigation_engine import InvestigationEngine
-from trace_backend.schemas import InvestigationReport
+from trace_backend.schemas import InvestigationReport, InvestigationStatus
 
 
 class TestSchemas(unittest.TestCase):
@@ -37,6 +37,18 @@ class TestSchemas(unittest.TestCase):
         self.assertTrue(any("Malformed" in w for w in rep.warnings))
         # Raw output preserved, not silently dropped.
         self.assertIn("not json", rep.alternative_hypotheses[0])
+
+    def test_investigation_status_round_trip(self):
+        s = InvestigationStatus(
+            investigation_id="inv-1", status="done", progress=1.0,
+            stage="report", investigation_type="explain")
+        d = s.to_dict()
+        self.assertEqual(d["investigation_type"], "explain")
+        back = InvestigationStatus(**d)
+        self.assertEqual(back.investigation_type, "explain")
+        # default stays debug for backward compatibility
+        plain = InvestigationStatus(investigation_id="i", status="done")
+        self.assertEqual(plain.investigation_type, "debug")
 
     def test_invalid_confidence_downgraded(self):
         from pathlib import Path
