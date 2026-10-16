@@ -150,12 +150,16 @@ class ResultsWindowManager:
         if not view.complete:
             self._banner(B, view.banner, RED if view.status == "error" else AMBER)
             return
+        is_explain = view.investigation_type == "explain"
         # header
-        self._h1(B, "Diagnosis")
+        self._h1(B, "Overview" if is_explain else "Diagnosis")
         self._badge_row(B, f"confidence: {view.confidence}",
                         CONF_COLORS.get(view.confidence, MUTED))
+        if is_explain:
+            self._badge_row(B, "explain mode", AMBER)
         self._para(B, view.summary)
-        self._h2(B, "Most likely root cause")
+        self._h2(B, "What this code does" if is_explain else
+                 "Most likely root cause")
         self._para(B, view.root_cause)
         if view.confidence_rationale:
             self._h2(B, "Why — evidence")
@@ -165,6 +169,10 @@ class ResultsWindowManager:
         if view.verified_findings:
             for f in view.verified_findings:
                 self._finding(B, f, verified=True)
+        elif is_explain:
+            self._para(B, "No verified code locations — the explanation covers "
+                          "the code in general rather than specific lines.",
+                       muted=True)
         else:
             self._para(B, "No verified source locations. The evidence was not "
                           "sufficient to pin the bug to a file and line.",
@@ -173,13 +181,15 @@ class ResultsWindowManager:
             self._h2(B, "Unverified hypotheses — not confirmed")
             for f in view.hypotheses:
                 self._finding(B, f, verified=False)
-        # C. fix
-        self._h1(B, "Proposed solution")
-        if view.fix_description:
-            self._para(B, view.fix_description)
-        else:
-            self._para(B, "No fix proposed — the evidence does not support one yet.",
-                       muted=True)
+        # C. fix — explain mode skips this section entirely when there is
+        # no fix (the engine is instructed not to propose one).
+        if not is_explain or view.fix_description or view.fix_diff:
+            self._h1(B, "Proposed solution")
+            if view.fix_description:
+                self._para(B, view.fix_description)
+            elif not is_explain:
+                self._para(B, "No fix proposed — the evidence does not support one yet.",
+                           muted=True)
         if view.fix_applied and view.fix_applied.get("applied"):
             files = ", ".join(view.fix_applied.get("applied_files", []))
             self._para(B, f"Fixed directly in: {files or '(unknown files)'} "

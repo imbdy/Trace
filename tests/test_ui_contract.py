@@ -139,6 +139,17 @@ class TestResultModel(unittest.TestCase):
         view = build_result_view({"status": "done", "report": "nonsense"})
         self.assertFalse(view.complete)
 
+    def test_investigation_type_defaults_to_debug(self):
+        view = build_result_view(self._status())
+        self.assertEqual(view.investigation_type, "debug")
+
+    def test_investigation_type_explain_carried_through(self):
+        status = self._status()
+        status["investigation_type"] = "explain"
+        view = build_result_view(status)
+        self.assertTrue(view.complete)
+        self.assertEqual(view.investigation_type, "explain")
+
     def test_location_format(self):
         self.assertEqual(format_location("a.py", 4, 5), "a.py:4–5")
         self.assertEqual(format_location("a.py", 4, 4), "a.py:4")
@@ -161,6 +172,37 @@ class TestResultModel(unittest.TestCase):
                                                    "applied": True}, 200)):
             out = TraceApiClient().apply_fix("inv-1")
             self.assertTrue(out.get("applied"))
+
+
+class TestInvestigationTypePlumbing(unittest.TestCase):
+    def test_app_submit_sends_investigation_type(self):
+        from trace_ui import app as app_mod
+        seen = {}
+        api = mock.MagicMock()
+        api.start_investigation.side_effect = lambda body: (
+            seen.update(body) or "inv-1")
+        api.get_status.return_value = {"status": "done", "report": {}}
+        app = app_mod.TraceApp(api=api)
+        app._run_investigation("explain this", False, "explain")
+        self.assertEqual(seen["investigation_type"], "explain")
+        self.assertEqual(seen["request_text"], "explain this")
+
+    def test_app_submit_defaults_to_debug(self):
+        from trace_ui import app as app_mod
+        seen = {}
+        api = mock.MagicMock()
+        api.start_investigation.side_effect = lambda body: (
+            seen.update(body) or "inv-1")
+        app = app_mod.TraceApp(api=api)
+        app._run_investigation("x")
+        self.assertEqual(seen["investigation_type"], "debug")
+
+    def test_protocol_contract_has_investigation_type(self):
+        import pathlib
+        proto = pathlib.Path(__file__).resolve().parent.parent / "electron" / \
+            "src" / "shared" / "protocol.ts"
+        text = proto.read_text(encoding="utf-8")
+        self.assertIn('investigation_type?: "debug" | "explain"', text)
 
 
 class TestNoForbiddenIntegrations(unittest.TestCase):

@@ -29,6 +29,9 @@ interface RendererStatus {
   investigation_id: string;
   status: "running" | "done" | "error" | "cancelled";
   progress: number; stage: string;
+  // "debug" (default) or "explain": tailors the verdict view (no fix/apply
+  // sections when there is no fix).
+  investigation_type: string;
   report?: RendererReport | null;
   error?: { code: string; message: string; hint?: string } | null;
 }

@@ -22,7 +22,8 @@ Request (`InvestigationRequest`):
   "extra_context": "... (optional)",
   "follow_up_of": "inv-abc123 (optional; see POST .../follow-up)",
   "auto_fix": false,
-  "run_tests": false
+  "run_tests": false,
+  "investigation_type": "debug | explain (default debug)"
 }
 ```
 
@@ -39,6 +40,11 @@ Request (`InvestigationRequest`):
 - `run_tests=true`: include the project's allowlisted test output as evidence.
   Execution is opt-in server-wide (`TRACE_ALLOW_TESTS=1`); project scripts are
   never executed.
+- `investigation_type="explain"`: explain the code instead of debugging an
+  error — the engine skips error extraction and test execution, reads
+  candidate files found from the request text, and answers with the
+  code-explanation prompt (`root_cause` then describes the code's
+  purpose/intent, and no fix is proposed unless there is a clear bug).
 
 Response: `{"investigation_id": "inv-abc123"}`.
 
@@ -57,7 +63,8 @@ Poll status/result (`InvestigationStatus`):
   "progress": 0.0,
   "stage": "read_files",
   "report": { "..." (when done) },
-  "error": { "code": "...", "message": "..." }
+  "error": { "code": "...", "message": "..." },
+  "investigation_type": "debug | explain (echoed from the request)"
 }
 ```
 

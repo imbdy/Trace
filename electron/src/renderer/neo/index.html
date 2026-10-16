@@ -42,6 +42,10 @@
           <input id="ask-fix" type="checkbox">
           <span>Fix it for me (write the verified patch, keep a backup)</span>
         </label>
+        <div id="ask-mode" role="radiogroup" aria-label="Investigation mode">
+          <label class="mode-btn"><input type="radio" name="investigation_type" value="debug" checked> Debug</label>
+          <label class="mode-btn"><input type="radio" name="investigation_type" value="explain"> Explain</label>
+        </div>
         <div id="live" hidden>
           <div id="live-title-row"><span id="live-title">Investigation</span><span id="live-phase">—</span></div>
           <div id="stitch">

@@ -76,6 +76,7 @@ export interface InvestigationStatus {
   stage: string;
   report?: InvestigationReport | null;
   error?: { code: string; message: string; hint?: string } | null;
+  investigation_type?: "debug" | "explain";
 }
 
 // Labels shown ONLY for backend stages actually received. Never simulated.

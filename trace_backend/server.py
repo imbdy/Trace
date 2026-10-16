@@ -167,6 +167,7 @@ class InvestigationStore:
                 "request_text_preview": (job.request.request_text or "")[:300],
                 "project_dir": job.request.project_dir or "",
                 "follow_up_of": job.request.follow_up_of or "",
+                "investigation_type": job.request.investigation_type,
             },
         })
 
@@ -193,13 +194,16 @@ class InvestigationStore:
             return None
         report = payload.get("report")
         error = payload.get("error")
+        req = payload.get("request")
         return InvestigationStatus(
             investigation_id=payload.get("investigation_id") or inv_id,
             status=payload.get("status", "done"),
             progress=float(payload.get("progress") or 1.0),
             stage=payload.get("stage", "report"),
             report=report if isinstance(report, dict) else None,
-            error=error if isinstance(error, dict) else None)
+            error=error if isinstance(error, dict) else None,
+            investigation_type=(req or {}).get("investigation_type", "debug")
+            if isinstance(req, dict) else "debug")
 
     def resolve_report(self, inv_id: str) -> dict | None:
         """The report for ``inv_id``: in-memory job first, then the journal."""
@@ -321,7 +325,8 @@ def make_handler(store: InvestigationStore, config: TraceConfig,
                     status = InvestigationStatus(
                         investigation_id=job.id, status=job.status,
                         progress=job.progress, stage=job.stage,
-                        report=job.report, error=job.error)
+                        report=job.report, error=job.error,
+                        investigation_type=job.request.investigation_type)
                     return self._send_json(status.to_dict())
                 # Not in memory: fall back to the journal so a verdict stays
                 # recallable after a restart. Absent there → honest 404.
