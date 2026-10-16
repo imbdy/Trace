@@ -197,8 +197,6 @@ class OllamaClient:
         try:
             if not stream:
                 raw = resp_cm.read()
-                if hasattr(resp_cm, "__exit__"):
-                    resp_cm.close()
                 return self._parse_nonstream(raw)
             return self._read_stream(resp_cm, on_token, cancel_event, timeout)
         finally:
