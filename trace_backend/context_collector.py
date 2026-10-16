@@ -63,7 +63,6 @@ def _foreground_window_win() -> tuple[str | None, str | None]:
             pid = wintypes.DWORD()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
             kernel32 = ctypes.windll.kernel32
-            psapi = ctypes.windll.psapi if hasattr(ctypes.windll, "psapi") else None
             hproc = kernel32.OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
             if hproc:
                 try:

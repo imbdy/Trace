@@ -367,7 +367,7 @@ def collect_diagnostics(root: Path, target_files: list[Path],
         add("cargo-check", ["cargo", "check", "--message-format=short"])
     if (root / "go.mod").exists() and have("go"):
         add("go-vet", ["go", "vet", "./..."])
-    if any((root / f).exists() for f in ("*.sln", "*.csproj")) and have("dotnet"):
+    if any(root.glob(f) for f in ("*.sln", "*.csproj")) and have("dotnet"):
         add("dotnet-build", ["dotnet", "build", "--nologo", "-v", "q"])
     if not results:
         results.append(DiagnosticResult(

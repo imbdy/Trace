@@ -238,8 +238,6 @@ def apply_unified_diff(
             res.warnings.append(f"Could not apply fix to {rel}: {e}")
             res.skipped.append(rel)
 
-    res.ok = overall_ok and not res.warnings or bool(res.applied_files)
-    # ok means "no unexpected failure"; applied means "files were written".
     res.ok = overall_ok or bool(res.applied_files)
     res.applied = bool(res.applied_files) and not res.dry_run
     if res.dry_run:

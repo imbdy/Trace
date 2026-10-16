@@ -222,7 +222,7 @@ def detect_test_command(root: Path) -> list[str] | None:
         if (next(root.glob("*.sln"), None) or next(root.glob("*.csproj"), None)) \
                 and shutil.which("dotnet"):
             return ["dotnet", "test", "--nologo"]
-    except (OSError, StopIteration):
+    except OSError:
         pass
     return None
 

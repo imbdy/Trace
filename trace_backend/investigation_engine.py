@@ -416,7 +416,8 @@ class InvestigationEngine:
                     investigation_id=inv_id,
                     summary="Project root could not be identified.",
                     root_cause="Unknown project location; no files inspected.",
-                    confidence="low", confidence_rationale=screenshot_note,
+                    confidence="low",
+                    confidence_rationale="No project root was identified, so no code could be inspected for evidence.",
                     needs_more_info=[msg],
                     evidence_summary=f"{screenshot_note}\n{ctx.summary()}",
                     warnings=["No project files were read; refusing to invent an explanation."])
