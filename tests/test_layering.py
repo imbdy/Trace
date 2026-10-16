@@ -120,7 +120,7 @@ class TestLayering(unittest.TestCase):
         self.assertIsNone(check_file(
             "trace_backend/server.py",
             allow_abs={"trace_backend"},
-            allow_rel={"config", "history", "investigation_engine", "schemas"},
+            allow_rel={"chat_service", "config", "history", "investigation_engine", "schemas"},
             forbid_rel={"ollama_client", "screenshot_service",
                         "project_inspector", "context_collector", "validator",
                         "code_fixer", "code_tools"},

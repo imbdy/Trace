@@ -27,6 +27,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from .chat_service import ChatService
 from .config import TraceConfig
 from .history import HistoryJournal, default_history_dir
 from .investigation_engine import InvestigationCancelled, InvestigationEngine
@@ -252,7 +253,8 @@ def open_file_in_editor(path: str, line: int | None = None) -> dict:
         return {"ok": False, "error": f"Could not open {path}: {e}"}
 
 
-def make_handler(store: InvestigationStore, config: TraceConfig):
+def make_handler(store: InvestigationStore, config: TraceConfig,
+                 chat_service: ChatService | None = None):
     class Handler(BaseHTTPRequestHandler):
         server_version = "Trace/0.1"
 
@@ -426,6 +428,8 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                     target, int(line) if isinstance(line, int) else None)
                 return self._send_json(result,
                                        200 if result.get("ok") else 404)
+            if path == "/api/v1/chat":
+                return self._do_chat()
             return self._send_json(error_envelope("not_found", "Unknown route"), 404)
 
         def _start_follow_up(self, parent_id: str):
@@ -503,6 +507,30 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                 "bad_state", reason or "Fix could not be applied.",
                 "; ".join(outcome.get("warnings", []) or "")), 409)
 
+        def _do_chat(self):
+            """POST /api/v1/chat — multi-turn conversation with Trace.
+
+            Body: {"message": str, "session_id": str|null, "project_dir": str|null}
+            Returns: {"session_id": str, "reply": str, "type": str, "error": str|null}
+            """
+            if chat_service is None:
+                return self._send_json(error_envelope(
+                    "bad_state", "Chat service is not available."), 503)
+            data = self._read_json()
+            message = str(data.get("message", ""))
+            session_id = data.get("session_id")
+            project_dir = data.get("project_dir")
+            if not message.strip():
+                return self._send_json(error_envelope(
+                    "bad_request", "Missing 'message'"), 400)
+            result = chat_service.chat(
+                message,
+                session_id=session_id,
+                project_dir=project_dir,
+            )
+            status = 400 if result.get("error") and not result.get("reply") else 200
+            return self._send_json(result, status)
+
         def do_OPTIONS(self):
             self.send_response(204)
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -562,7 +590,8 @@ def run_server(config: TraceConfig | None = None, *,
     _apply_background_identity()
     engine = engine or InvestigationEngine(config)
     store = InvestigationStore(engine, config)
-    handler = make_handler(store, config)
+    chat_service = ChatService(config)
+    handler = make_handler(store, config, chat_service=chat_service)
     server = ThreadingHTTPServer((config.bind_host, config.bind_port), handler)
     server.daemon_threads = True
     if block:
