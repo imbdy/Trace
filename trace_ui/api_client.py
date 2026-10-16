@@ -114,6 +114,22 @@ class TraceApiClient:
             {"dry_run": bool(dry_run)})
         return payload
 
+    def chat(self, message: str, *,
+             session_id: str | None = None,
+             project_dir: str | None = None) -> dict:
+        """Send a message to the chat endpoint and return the reply.
+
+        Returns a dict like:
+            {"session_id": "...", "reply": "...", "type": "text", "error": None}
+        """
+        body: dict = {"message": message}
+        if session_id:
+            body["session_id"] = session_id
+        if project_dir:
+            body["project_dir"] = project_dir
+        _, payload = self._request("POST", "/chat", body)
+        return payload
+
     def stream_events(self, inv_id: str, on_event,
                       stop: threading.Event | None = None) -> None:
         """Blocking SSE read. Calls on_event(dict) per event. Returns at the
