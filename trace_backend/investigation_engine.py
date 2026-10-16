@@ -89,6 +89,21 @@ diagnostic step in needs_more_info. When you propose a fix, return a MINIMAL uni
 so it can be applied directly; keep hunks small and scoped to the bug."""
 
 
+EXPLAIN_SYSTEM_PROMPT = """You are Trace, a careful code-explanation assistant. Analyze the provided code
+excerpts and return ONLY valid JSON with this exact schema:
+{"summary": str, "root_cause": str, "confidence": "low"|"medium"|"high",
+ "confidence_rationale": str, "findings": [{"title": str, "file_path": str,
+ "start_line": int, "end_line": int, "explanation": str, "evidence": str}],
+ "recommended_fix": {"description": str, "diff": str, "rationale": str},
+ "alternative_hypotheses": [str], "needs_more_info": [str], "evidence_summary": str}
+Rules: Explain what the code does, how it works, and any notable behavior or
+potential issues. Only cite file paths and line numbers that appear in the
+provided FILE excerpts. Never invent paths, line numbers, or behavior. If
+evidence is insufficient, set confidence to "low" and explain what is known
+vs uncertain. The "root_cause" field should describe the purpose/intent of
+the code (not a bug). Do not propose fixes unless there is a clear bug."""
+
+
 def _check_cancelled(cancel: threading.Event | None):
     if cancel is not None and cancel.is_set():
         raise InvestigationCancelled("Investigation cancelled by user.")
@@ -368,9 +383,12 @@ class InvestigationEngine:
                 root_cause="; ".join(problems), confidence="low",
                 warnings=["Invalid request: " + "; ".join(problems)])
 
+        is_explain = request.investigation_type == "explain"
+
         # 1. receive
         _check_cancelled(cancel_event)
-        emit("receive", "Received debugging request.")
+        emit("receive", "Received code explanation request." if is_explain
+             else "Received debugging request.")
 
         # 2. screenshot
         _check_cancelled(cancel_event)
@@ -422,13 +440,17 @@ class InvestigationEngine:
                     evidence_summary=f"{screenshot_note}\n{ctx.summary()}",
                     warnings=["No project files were read; refusing to invent an explanation."])
 
-            # 5. error extraction
+            # 5. error extraction (skipped for explain mode)
             _check_cancelled(cancel_event)
-            emit("error_extract", "Extracting error message and stack trace…")
-            combined_text = "\n\n".join(t for t in [
-                request.request_text, request.terminal_output or "",
-                request.editor_selection or "", request.extra_context or ""] if t)
-            error: ErrorInfo = extract_error_info(combined_text)
+            if is_explain:
+                emit("error_extract", "Skipping error extraction (explain mode).")
+                error = ErrorInfo()
+            else:
+                emit("error_extract", "Extracting error message and stack trace…")
+                combined_text = "\n\n".join(t for t in [
+                    request.request_text, request.terminal_output or "",
+                    request.editor_selection or "", request.extra_context or ""] if t)
+                error: ErrorInfo = extract_error_info(combined_text)
 
             # 6. read files (frames first, then ranked candidates + imports)
             _check_cancelled(cancel_event)
@@ -436,26 +458,30 @@ class InvestigationEngine:
             files: list[tuple[Path, str]] = []
             read_notes: list[str] = []
             seen: set[Path] = set()
-            _read_frame_files(root, error, seen, files, read_notes,
-                              self.config.max_file_bytes, cancel_event)
+            if not is_explain:
+                _read_frame_files(root, error, seen, files, read_notes,
+                                  self.config.max_file_bytes, cancel_event)
+            query = request.request_text + (
+                " " + error.message if not is_explain and error.message else "")
             _read_candidate_files(
-                root, request.request_text + " " + error.message,
-                seen, files, self.config.max_file_bytes, cancel_event)
+                root, query, seen, files, self.config.max_file_bytes,
+                cancel_event)
             if not files:
                 needs_more.append(
                     "No relevant project files could be identified. Select the project "
                     "folder, paste the error output, or name the file you suspect.")
 
-            # 7. diagnostics (+ opt-in tests + code intelligence)
+            # 7. diagnostics (+ opt-in tests + code intelligence; tests only
+            #    in debug mode — explain mode focuses on understanding code)
             _check_cancelled(cancel_event)
-            emit("diagnostics", "Collecting compiler/linter/test diagnostics…")
+            emit("diagnostics", "Collecting compiler/linter diagnostics…")
             diagnostics = collect_diagnostics(
                 root, [p for p, _ in files],
                 timeout_s=self.config.diagnostics_timeout_s)
             _check_cancelled(cancel_event)
             intelligence = _code_intelligence_section(root, error, files)
             test_note = ""
-            if request.run_tests:
+            if not is_explain and request.run_tests:
                 test_res = run_project_tests(
                     root, timeout_s=self.config.diagnostics_timeout_s,
                     allowed=self.config.allow_test_execution)
@@ -479,10 +505,18 @@ class InvestigationEngine:
                 bundle = (bundle + "\n\n---\n\n" + intelligence)[:self.config.max_context_chars]
             if test_note:
                 bundle = (bundle + "\n\n---\n\n" + test_note)[:self.config.max_context_chars]
-            user_prompt = (bundle + "\n\n---\n\nAnalyze the evidence above and return ONLY the JSON report. "
-                           "Do not invent file paths or line numbers. "
-                           "Propose a minimal unified diff that applies cleanly.")
-            messages = [{"role": "system", "content": SYSTEM_PROMPT},
+            if is_explain:
+                user_prompt = (bundle + "\n\n---\n\nExplain the code above and return ONLY the JSON report. "
+                               "Describe what the code does, how it works, and any "
+                               "notable behavior or potential issues. Do not invent "
+                               "file paths or line numbers.")
+                system_prompt = EXPLAIN_SYSTEM_PROMPT
+            else:
+                user_prompt = (bundle + "\n\n---\n\nAnalyze the evidence above and return ONLY the JSON report. "
+                               "Do not invent file paths or line numbers. "
+                               "Propose a minimal unified diff that applies cleanly.")
+                system_prompt = SYSTEM_PROMPT
+            messages = [{"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt}]
             if screenshot_b64 and shot is not None:
                 # Ollama vision: attach image to the user message when supported.

@@ -40,6 +40,10 @@ class InvestigationRequest:
     # runs the project's allowlisted test command and includes the output as
     # evidence. Project scripts are never executed.
     run_tests: bool = False
+    # Investigation type: "debug" (default) runs the standard error-focused
+    # pipeline; "explain" explains how the code works instead of debugging an
+    # error (skips error extraction, uses a code-explanation prompt).
+    investigation_type: str = "debug"  # "debug" | "explain"
 
     def validate(self) -> list[str]:
         problems: list[str] = []
@@ -65,6 +69,7 @@ class InvestigationRequest:
             follow_up_of=data.get("follow_up_of"),
             auto_fix=bool(data.get("auto_fix", False)),
             run_tests=bool(data.get("run_tests", False)),
+            investigation_type=str(data.get("investigation_type", "debug")),
         )
 
     def to_dict(self) -> dict:
