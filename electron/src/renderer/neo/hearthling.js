@@ -5,11 +5,11 @@
 // theirs and are NOT used here). What Neo takes over is the craft, not the
 // character: a compact superellipse body, eyes clipped to the silhouette and
 // projected on a gaze sphere, a small eye-shape vocabulary, keyframed tweens
-// with eased settle, a pokeâ†’annoyedâ†’dizzy arc, and token-guarded timeouts.
+// with eased settle, a poke—annoyed—dizzy arc, and token-guarded timeouts.
 //
 // Neo's own identity: a warm ember body (pale top, deep base, inner warmth
 // instead of a plain grey), monitoring-driven colour wash, a plain badge pip
-// above his head for waiting/error/done, and silence â€” he murmurs through
+// above his head for waiting/error/done, and silence — he murmurs through
 // the shell's text lines, never with sound.
 //
 // States (monitoring truth, owned by the shell): idle | working | thinking |
@@ -203,7 +203,7 @@
     anim('sx', [[1.16, 70, Ease.out], [0.95, 130, Ease.out], [1, 170, Ease.inOut]]);
   }
 
-  // The poke arc, Neo-flavoured: startle (wide dot) â†’ annoyed (line) â†’ dizzy.
+  // The poke arc, Neo-flavoured: startle (wide dot) — annoyed (line) — dizzy.
   // Returns the kind so the shell can murmur in key. Guarded against the
   // monitoring one-shots owning the stage.
   function pokeReact() {

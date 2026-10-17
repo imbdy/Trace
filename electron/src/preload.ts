@@ -1,6 +1,6 @@
 // Trace preload bridge: the ONLY API the renderer sees. Neo-shaped channels
-// (resize/hide/settings) plus Trace investigation channels. No Node, no
-// Electron, no backend URLs, no model access in the renderer.
+// (resize/hide) plus Trace investigation channels. No Node, no Electron, no
+// backend URLs, no model access in the renderer.
 import { contextBridge, ipcRenderer, IpcRendererEvent } from "electron";
 
 export interface TraceBridge {
@@ -18,9 +18,6 @@ export interface TraceBridge {
   onStage: (cb: (ev: { investigation_id?: string; stage: string; message: string; progress: number }) => void) => void;
   onReport: (cb: (status: unknown) => void) => void;
   onBackend: (cb: (info: { ok: boolean; message: string }) => void) => void;
-  settings: () => Promise<Record<string, unknown>>;
-  pause: (minutes: number) => void;
-  resume: () => void;
 }
 
 const api: TraceBridge = {
@@ -38,9 +35,6 @@ const api: TraceBridge = {
   onStage: (cb) => ipcRenderer.on("trace:stage", (_e: IpcRendererEvent, ev) => cb(ev)),
   onReport: (cb) => ipcRenderer.on("trace:report", (_e: IpcRendererEvent, st) => cb(st)),
   onBackend: (cb) => ipcRenderer.on("trace:backend", (_e: IpcRendererEvent, info) => cb(info)),
-  settings: () => ipcRenderer.invoke("trace:settings"),
-  pause: (minutes) => ipcRenderer.send("trace:pause", minutes),
-  resume: () => ipcRenderer.send("trace:resume"),
 };
 
 contextBridge.exposeInMainWorld("trace", api);

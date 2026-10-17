@@ -30,7 +30,6 @@ from .code_tools import (
     file_outline,
     find_symbol,
     run_project_tests,
-    search_text,
 )
 from .config import TraceConfig
 from .context_collector import LocalContext, collect_local_context

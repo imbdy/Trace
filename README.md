@@ -31,7 +31,7 @@ Pipeline: `receive → screenshot → context → project_root → error_extract
 read_files → diagnostics → model_analysis → validate → report`.
 
 **Desktop frontend (`electron/`, primary):** Electron + TypeScript + HTML/CSS —
-character bar (`src/renderer/character.*`), results window
+character bar (`src/renderer/neo/`), results window
 (`src/renderer/results.*`), main-process backend supervisor + IPC
 (`src/main/`), isolated preload bridge (`src/preload.ts`). The system is kept
 separated into the five components in `docs/ARCHITECTURE.md` — desktop
@@ -41,7 +41,7 @@ fallback: `python main.py` (`--backend-only` for the server alone).
 Layering is enforced by `tests/test_layering.py` + `tests/test_frontend_guards.py`.
 
 ```powershell
-cd C:\Users\abood\PycharmProjects\Trace\electron
+cd electron
 npm install
 npm run build
 npx electron . --project-dir C:\path\to\your\project
@@ -54,10 +54,10 @@ Python visible as `python` (or set `TRACE_PYTHON`), and
 
 ## Setup
 
-Requires Python ≥ 3.10 (repo requests 3.14; tested on 3.14.5).
+Requires Python ≥ 3.10 (`requires-python` in `pyproject.toml`); CI builds on 3.12.
 
 ```powershell
-cd C:\Users\abood\PycharmProjects\Trace
+cd Trace
 python -m venv .venv; .\.venv\Scripts\Activate.ps1
 pip install -e ".[screenshots]"
 ```
@@ -127,7 +127,7 @@ curl -N http://127.0.0.1:3777/api/v1/investigations/inv-.../events  # SSE
 
 ## Desktop releases
 
-Windows installers are published from tags such as `v0.2.0` at
+Windows installers are published from tags such as `v0.4.1` at
 [github.com/imbdy/Trace/releases](https://github.com/imbdy/Trace/releases).
 The installer includes the loopback backend, so Python is not required on the
 user's machine. Installed copies check GitHub Releases in the background and
@@ -137,8 +137,8 @@ To publish a release after changing the Electron version in
 `electron/package.json`:
 
 ```powershell
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.4.1
+git push origin v0.4.1
 ```
 
 The GitHub Actions workflow builds the backend, creates the Windows NSIS

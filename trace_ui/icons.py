@@ -76,7 +76,6 @@ def _set_console_icon() -> None:
     """Apply trace.ico to the owning console window. Best-effort."""
     try:
         import ctypes
-        from ctypes import wintypes
     except Exception:
         return
     try:

@@ -3,7 +3,7 @@
 // render as honest banners with a skeleton shimmer. Findings split into
 // verified locations vs unverified hypotheses. Nothing is ever synthesized:
 // missing excerpts/diffs render as missing.
-// Import-free on purpose (see trace-api.d.ts): RendererFinding /
+// Import-free on purpose (see results-types.d.ts): RendererFinding /
 // RendererStatus are renderer-owned structural copies of the contract.
 
 const root = document.querySelector("#root") as HTMLElement;

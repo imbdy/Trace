@@ -2,7 +2,6 @@
 
 import io
 import json
-import queue
 import threading
 import unittest
 from unittest import mock

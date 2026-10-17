@@ -2,8 +2,11 @@ __pycache__/
 *.py[cod]
 .venv/
 *.egg-info/
+.idea/
+.pytest_cache/
 electron/dist/
 electron/node_modules/
 electron/resources/backend/
+test_output*.txt
 *.trace-bak
 *.trace-tmp
