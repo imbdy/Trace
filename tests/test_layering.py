@@ -80,8 +80,6 @@ class TestLayering(unittest.TestCase):
         violations = []
         for f in (ROOT / "trace_backend").rglob("*.py"):
             abs_mods, rel_mods = file_imports(f)
-            if "trace_ui" in abs_mods or "tkinter" in abs_mods - {"context_collector"}:
-                pass
             if "trace_ui" in abs_mods:
                 violations.append(str(f))
             if f.name != "context_collector.py" and "tkinter" in abs_mods:
@@ -120,7 +118,7 @@ class TestLayering(unittest.TestCase):
         self.assertIsNone(check_file(
             "trace_backend/server.py",
             allow_abs={"trace_backend"},
-            allow_rel={"chat_service", "config", "history", "investigation_engine", "schemas"},
+            allow_rel={"config", "history", "investigation_engine", "schemas"},
             forbid_rel={"ollama_client", "screenshot_service",
                         "project_inspector", "context_collector", "validator",
                         "code_fixer", "code_tools"},

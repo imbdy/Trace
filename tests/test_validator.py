@@ -11,7 +11,6 @@ from trace_backend.schemas import (
 )
 from trace_backend.validator import (
     sanitize_report,
-    verify_finding,
     verify_fix_diff,
     verify_location,
 )

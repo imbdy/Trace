@@ -144,7 +144,6 @@ def apply_unified_diff(
             if start < 1 or not _old_side_matches(root, rel, start, old):
                 file_ok = False
                 break
-            # Anchor line itself must exist for pure insertions too.
         if not file_ok:
             overall_ok = False
             res.warnings.append(

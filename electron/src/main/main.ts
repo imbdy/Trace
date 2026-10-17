@@ -11,6 +11,7 @@
 import { app, BrowserWindow, ipcMain, screen, shell, Notification, Tray, Menu, nativeImage } from "electron";
 import { autoUpdater } from "electron-updater";
 import * as path from "path";
+import * as fs from "fs";
 
 // placement.js / settings.js are Neo's, kept verbatim as dependency-free JS
 // (node --test covers them); required here at runtime after copy-assets.
@@ -21,16 +22,7 @@ const placement = require("./placement") as {
 const settings = require("./settings") as {
   defaults: () => Record<string, unknown>;
   load: (dir: string | null) => Record<string, unknown>;
-  save: (dir: string | null, s: Record<string, unknown>) => boolean;
-  describe: (s: Record<string, unknown>, now: number) => { paused: boolean; disabled: boolean; quiet: boolean; label: string };
   mayNotify: (s: Record<string, unknown>, date: Date) => boolean;
-  pauseMinutes: (s: Record<string, unknown>, m: number, now: number) => Record<string, unknown>;
-  resume: (s: Record<string, unknown>) => Record<string, unknown>;
-  setQuietHours: (s: Record<string, unknown>, on: boolean) => Record<string, unknown>;
-  setNotifications: (s: Record<string, unknown>, on: boolean) => Record<string, unknown>;
-  setDisabled: (s: Record<string, unknown>, on: boolean) => Record<string, unknown>;
-  setPosition: (s: Record<string, unknown>, p: string) => Record<string, unknown>;
-  NEO_POSITIONS: string[];
 };
 
 import { BackendManager } from "./backend";
@@ -58,7 +50,6 @@ try {
   /* ignore */
 }
 function traceIconFile(preferIco: boolean): string | undefined {
-  const fs = require("fs") as typeof import("fs");
   const names = preferIco
     ? ["trace.ico", "trace.png", "trace-256.png"]
     : ["trace.png", "trace-32.png", "trace.ico"];
@@ -124,10 +115,6 @@ function settingsDir(): string | null {
   } catch {
     return null;
   }
-}
-function setCfg(next: Record<string, unknown>): void {
-  cfg = next;
-  settings.save(settingsDir(), cfg);
 }
 function mayNudge(): boolean {
   try {
@@ -547,21 +534,6 @@ function setupIpc(): void {
       return { ok: false, error: err.message, code: (err as ApiError).code };
     }
   });
-
-  ipcMain.handle("trace:settings", async () => {
-    try {
-      const d = settings.describe(cfg, Date.now());
-      return { ...d };
-    } catch {
-      return { paused: false, disabled: false, quiet: false, label: "" };
-    }
-  });
-  ipcMain.on("trace:pause", (_e, minutes: number) => {
-    setCfg(settings.pauseMinutes(cfg, Number(minutes) || 10, Date.now()));
-  });
-  ipcMain.on("trace:resume", () => {
-    setCfg(settings.resume(cfg));
-  });
 }
 
 function smokeAssert(cond: boolean, name: string, extra = ""): boolean {
@@ -687,8 +659,6 @@ async function runSmoke(projectDir: string): Promise<number> {
   const rep = status.report;
   A(!!rep && !!rep.summary, "structured report returned", (rep?.summary ?? "").slice(0, 80));
   const verified = (rep?.findings ?? []).filter((f) => f.verified);
-  const path = require("path") as typeof import("path");
-  const fs = require("fs") as typeof import("fs");
   const realFiles = verified.filter((f) => {
     try {
       return fs.existsSync(f.file_path) || fs.existsSync(path.join(projectDir, f.file_path));
@@ -739,15 +709,6 @@ async function startup(): Promise<void> {
   resultsWin = createResults();
   buildTray();
   setupAutoUpdates();
-  charWin.once("ready-to-show", () => {
-    try {
-      charWin?.setAlwaysOnTop(true, "screen-saver");
-    } catch {
-      /* ignore */
-    }
-    if (SMOKE) charWin?.showInactive();
-    else charWin?.showInactive();
-  });
   charWin.webContents.once("did-finish-load", () => {
     charWin?.webContents.send("trace:backend", {
       ok: okBackend,
@@ -826,5 +787,3 @@ try {
 } catch {
   /* single static display */
 }
-
-export { INITIAL_W, INITIAL_H };

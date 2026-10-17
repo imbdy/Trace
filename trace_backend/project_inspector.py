@@ -15,7 +15,6 @@ import os
 import re
 import shutil
 import subprocess
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -56,7 +55,7 @@ SECRET_PATTERNS = [
     re.compile(r"(?i)(aws_secret_access_key|aws_access_key_id)\s*[:=]\s*['\"]?([^\s'\"]+)"),
     re.compile(r"sk-[A-Za-z0-9]{8,}"),
     re.compile(r"ghp_[A-Za-z0-9]{20,}"),
-    re.compile(r"xox[bap]- [A-Za-z0-9-]+"),
+    re.compile(r"xox[bap]-[A-Za-z0-9-]+"),
 ]
 
 MAX_CANDIDATE_FILES = 60

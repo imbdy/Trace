@@ -11,7 +11,7 @@ secrets (see project_inspector.redact_secrets).
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 DEFAULT_MODEL = "gemma4:31b-cloud"

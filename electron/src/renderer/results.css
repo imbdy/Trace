@@ -169,7 +169,6 @@ pre.code .dl.hunk { color: var(--accent); }
 .copy-btn:active:not(:disabled) { transform: scale(0.96); }
 .copy-btn:disabled { opacity: 0.4; cursor: default; }
 .copy-box pre.code { margin: 0; border: 0; border-radius: 0; box-shadow: none; }
-.apply-note { font-size: 12px; color: var(--muted); padding: 9px 13px; }
 
 /* ---- lists ---- */
 ul.tight { margin: 6px 0; padding-left: 22px; }

@@ -6,15 +6,30 @@
   directly (no /api/chat, /api/generate, :11434); the Python backend owns
   all model communication, and Trace never touches Neoma.
 - Fidelity: hearthling.js is Neo's face renderer modulo documented renames.
+  This check needs the sibling Neoma checkout and is skipped unless
+  TRACE_NEO_ROOT (or TRACE_NEO_FACE) points at it.
 """
 
+import os
 import pathlib
 import re
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = ROOT / "electron" / "src"
-NEO_FACE = pathlib.Path(r"C:\Users\abood\PycharmProjects\neoma\Neo\renderer\hearthling.js")
+# Sibling Neoma checkout that hearthling.js was transplanted from. Point at it
+# with TRACE_NEO_ROOT (or TRACE_NEO_FACE for a single file) to re-run the
+# fidelity check; the test skips when neither is available so the suite runs
+# on machines without that checkout.
+NEO_ROOT = os.environ.get("TRACE_NEO_ROOT")
+NEO_FACE = pathlib.Path(
+    os.environ["TRACE_NEO_FACE"] if os.environ.get("TRACE_NEO_FACE")
+    else (str(pathlib.Path(NEO_ROOT) / "Neo" / "renderer" / "hearthling.js")
+          if NEO_ROOT else
+          pathlib.Path.home() / "PycharmProjects" / "neoma" / "Neo"
+          / "renderer" / "hearthling.js")
+)
+HAS_NEO_SOURCE = NEO_FACE.is_file()
 
 NEOMA_SIGNAL = re.compile(
     r"^\s*(import|from)\s+neoma|neoma\s*\.\s*\w|neoma[-_]?(api|client|session)|"
@@ -132,6 +147,9 @@ class TestNeoFidelity(unittest.TestCase):
          "    const rx = R * 1.10 * 0.78, ry = R * 0.92; // compact and wide (Trace narrowing): he sits, not floats"),
     ]
 
+    @unittest.skipUnless(HAS_NEO_SOURCE,
+                         f"Neoma source not available at {NEO_FACE} "
+                         "(set TRACE_NEO_ROOT or TRACE_NEO_FACE to enable)")
     def test_face_is_neos_verbatim(self):
         """Core face primitives stay byte-identical to Neo's renderer."""
         neo = NEO_FACE.read_text(encoding="utf-8")
