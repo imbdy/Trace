@@ -1,158 +1,317 @@
-# Trace — Independent Debugging Backend
+<div align="center">
+  <img src="assets/icons/trace-256.png" width="88" alt="Trace">
+  <h1>Trace</h1>
+  <p><strong>An AI debugging companion that verifies every file it cites.</strong></p>
+  <p>
+    Describe the bug. Trace captures your screen, reads your actual source,
+    runs your project's diagnostics, and returns a verdict — with every
+    <code>file:line</code> checked against the files on disk before you see it.
+  </p>
+  <p>
+    <a href="https://github.com/imbdy/Trace/releases/latest">
+      <img alt="release" src="https://img.shields.io/github/v/release/imbdy/Trace?style=flat-square&label=release&color=7c8cff">
+    </a>
+    <a href="https://github.com/imbdy/Trace/releases">
+      <img alt="downloads" src="https://img.shields.io/github/downloads/imbdy/Trace/total?style=flat-square&label=downloads&color=5be08f">
+    </a>
+    <a href="https://github.com/imbdy/Trace/commits/main">
+      <img alt="last commit" src="https://img.shields.io/github/last-commit/imbdy/Trace?style=flat-square&label=commit&color=9aa4bf">
+    </a>
+    <img alt="platform" src="https://img.shields.io/badge/platform-Windows-0078D4?style=flat-square&logo=windows&logoColor=white">
+    <img alt="model" src="https://img.shields.io/badge/model-Ollama-202020?style=flat-square&logo=ollama&logoColor=white">
+  </p>
+</div>
 
-Trace is a standalone desktop debugging companion. It captures a screenshot,
-collects local context, inspects project code, runs available diagnostics,
-asks an Ollama model for analysis, **verifies every file path/line number
-against disk**, and returns a structured report over a documented loopback API.
+---
 
-Absolute independence: no Neoma connection, no session monitoring, no approval
-workflows, no reuse of external endpoints. Works when writing code alone.
+## Why this exists
 
-## Architecture (existing → new)
+Ask a language model about a bug and it will, with total confidence, tell you to
+fix `app/handlers/user.py:142`. Sometimes that file exists. Sometimes it does not.
+Either way the answer reads exactly the same, and you find out which it was only
+after you have chased the reference.
 
-**Existing repo:** empty PyCharm template (`main.py` hello-world, empty
-`pyproject.toml`). No backend, no frontend, no infrastructure to preserve.
+Trace is built around removing that failure mode. Every location it reports is
+opened on disk and checked. Anything it cannot confirm is moved out of the
+findings and into a clearly labelled **unverified — treat as hypothesis, not
+fact** section. There is no third bucket where a guess quietly becomes a fact.
 
-**New modules (`trace_backend/`):**
+| | A bare LLM | Trace |
+|---|---|---|
+| File paths | Invented, plausible | Opened and confirmed on disk |
+| Line numbers | Approximate | Verified against the file |
+| Your screen | Not sent | Captured and redacted |
+| Your clipboard | Read if asked | **Never read** |
+| Patches | Prose suggestions | Unified diff, verified, backed up |
+| "I'm not sure" | Rarely survives formatting | First-class, its own section |
 
-| Module | Responsibility (kept separate per spec) |
-|---|---|
-| `config.py` | Env-based config; loopback enforcement; redacted API view |
-| `schemas.py` | Typed request/report/event dataclasses + JSON |
-| `ollama_client.py` | ONLY model communication: timeouts, streaming, cancellation, user-facing errors. Model `gemma4:31b-cloud`, default `OLLAMA_HOST=http://127.0.0.1:11434` |
-| `screenshot_service.py` | Active/full capture (mss → Pillow), temp-file lifecycle, graceful failure |
-| `context_collector.py` | Active app/title (Win32 best-effort), editor selection, clipboard **only when authorized**, terminal tail |
-| `project_inspector.py` | Root detection, safe reads (allowlist + excludes), import following, error parsing, allowlisted diagnostics, budgeted redacted model bundle |
-| `validator.py` | Verifies every cited path/line; labels unverified, never invents |
-| `investigation_engine.py` | 10-stage pipeline orchestrating the above |
-| `server.py` | Loopback-only HTTP API + SSE + cancel + open-file |
+---
 
-Pipeline: `receive → screenshot → context → project_root → error_extract →
-read_files → diagnostics → model_analysis → validate → report`.
+## Screenshots
 
-**Desktop frontend (`electron/`, primary):** Electron + TypeScript + HTML/CSS —
-character bar (`src/renderer/neo/`), results window
-(`src/renderer/results.*`), main-process backend supervisor + IPC
-(`src/main/`), isolated preload bridge (`src/preload.ts`). The system is kept
-separated into the five components in `docs/ARCHITECTURE.md` — desktop
-character → orchestrator → Ollama `gemma4:31b-cloud` → evidence verification
-→ report window. `trace_ui/` (tkinter) is retained as a zero-dependency
-fallback: `python main.py` (`--backend-only` for the server alone).
-Layering is enforced by `tests/test_layering.py` + `tests/test_frontend_guards.py`.
+<p align="center">
+  <img src="docs/images/companion.png" width="820" alt="Trace collapsed, ready to debug">
+</p>
 
-```powershell
-cd electron
-npm install
-npm run build
-npx electron . --project-dir C:\path\to\your\project
+Trace lives as a small floating companion above your work. It is not in your
+taskbar, not in your way, and it has nothing to say until you ask.
+
+<p align="center">
+  <img src="docs/images/investigating.png" width="820" alt="Trace investigating, progress rail lighting up">
+</p>
+
+Click the face to open it, describe the bug, press <kbd>Investigate</kbd>. The
+progress rail lights up one step at a time — but only for stages the backend
+actually reported. Nothing is simulated to make it look busy.
+
+<p align="center">
+  <img src="docs/images/results-answer.png" width="720" alt="Trace results window, Answer tab">
+</p>
+
+<p align="center">
+  <img src="docs/images/results-diff.png" width="720" alt="Trace results window, verified patch">
+</p>
+
+The results window is a three-tab workspace: **Answer** for the verdict,
+**Code & Diff** for verified locations and the proposed patch, **Evidence** for
+what was collected and what is still missing.
+
+<p align="center">
+  <img src="docs/images/verdict.png" width="820" alt="Trace finished, two verified locations">
+</p>
+
+<p align="center">
+  <sub>Screenshots are real renders of the shipped UI, driven by a synthetic
+  investigation. The <code>shop-api</code> example project is fictional.</sub>
+</p>
+
+---
+
+## How an investigation runs
+
+Ten stages, streamed over the loopback API as server-sent events. The UI's
+five-step rail is a view onto them, not a separate progress bar:
+
+```
+receive  →  screenshot  →  context  →  project_root  →  error_extract
+        →  read_files  →  diagnostics  →  model_analysis  →  validate  →  report
 ```
 
-The app spawns `python main.py --backend-only` itself (loopback only) and
-reuses a running backend if one answers health. Requirements: Node 20+,
-Python visible as `python` (or set `TRACE_PYTHON`), and
-`ollama serve` + `ollama pull gemma4:31b-cloud` for real model analysis.
+- **`error_extract` is skipped in Explain mode**, and stack-frame files are not
+  pre-loaded — you are not debugging, you are asking what something does.
+- **`validate` is the important one.** It is what opens each cited path on disk.
+- Follow-up questions re-run a six-stage subset against the files the previous
+  report already cited, and pass through the same validator.
 
-## Setup
+---
 
-Requires Python ≥ 3.10 (`requires-python` in `pyproject.toml`); CI builds on 3.12.
+## Install
 
-```powershell
-cd Trace
-python -m venv .venv; .\.venv\Scripts\Activate.ps1
-pip install -e ".[screenshots]"
-```
+### Windows
 
-Optional screenshot backends: `pip install mss pillow`. Without them,
-screenshot capture fails gracefully and investigations continue with
-code/diagnostics only.
+Grab the latest installer from
+[releases](https://github.com/imbdy/Trace/releases). It ships the Python backend
+as a bundled executable, so you do not need Python installed.
 
-Ollama:
+Trace needs a model to think with. Install
+[Ollama](https://ollama.com) and pull the default model:
 
 ```powershell
 ollama serve
 ollama pull gemma4:31b-cloud
 ```
 
-## Configuration (env)
+### From source
 
-| Var | Default | Meaning |
-|---|---|---|
-| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama endpoint |
-| `TRACE_MODEL` | `gemma4:31b-cloud` | Model name |
-| `OLLAMA_API_KEY` | _(unset)_ | Bearer token if endpoint needs auth; never hardcoded |
-| `TRACE_BIND_HOST` | `127.0.0.1` | Must stay loopback |
-| `TRACE_BIND_PORT` | `3777` | Local port |
-| `TRACE_CONNECT_TIMEOUT_S` / `TRACE_READ_TIMEOUT_S` | `5` / `120` | Timeouts |
-| `TRACE_ALLOW_FILE_EDITS` | `1` | `0` disables all auto-fix / apply-fix writes |
-| `TRACE_ALLOW_TESTS` | `0` | `1` opts in to allowlisted test-runner output |
-
-## Run the backend
+Requires Node 20+ and Python 3.10 or newer.
 
 ```powershell
-python -m trace_backend          # serve on http://127.0.0.1:3777
-python main.py                   # same (launcher)
+git clone https://github.com/imbdy/Trace.git
+cd Trace
+
+cd electron
+npm install
+npm start -- --project-dir C:\path\to\your\project
 ```
 
-Health check: `GET /api/v1/health`. Full contract: `docs/API_CONTRACT.md`.
+The app spawns the backend itself. To run the pieces separately:
 
-Minimal client:
+```powershell
+pip install -e ".[screenshots]"   # optional extra: mss + Pillow for capture
+python main.py --backend-only     # loopback API on http://127.0.0.1:3777
+python main.py                    # tkinter fallback UI
+```
+
+---
+
+## Using Trace
+
+**The tray icon is the control centre.** It shows a live status line, plus
+Show Trace, Open results, Check for updates, and Quit. Once you tuck the window
+away, the tray is how you get it back.
+
+**Ask.** Click the face to unfold the panel. Type the bug or paste the traceback.
+<kbd>Enter</kbd> submits, <kbd>Shift</kbd>+<kbd>Enter</kbd> adds a line.
+<kbd>Esc</kbd> or `fold` closes the panel.
+
+**Debug or Explain.** A real switch, not a label. *Debug* extracts the error,
+reads the frames from your traceback, and may propose a patch. *Explain* skips
+error extraction and asks what the code is for, then declines to propose fixes.
+
+**Fix it for me.** Tick the box and Trace writes the patch straight to your file
+— but only after re-verifying it against the current contents on disk. The
+original is copied to `<name>.trace-bak` first. If the backup fails, the file is
+not touched at all. Unverified patches are never written, and the
+`Apply fix to files` button stays disabled.
+
+**Keep exploring.** Every report has a follow-up box. Ask about the diagnosis,
+ask about the proposed fix, keep asking — each follow-up is a separately
+verified report. Follow-ups cannot auto-fix, and do not re-capture your screen.
+
+**Past investigations.** The results window lists your last 50 investigations and
+searches them. Click any one to reopen that verdict, including from a previous
+run of the app.
+
+**Cancel.** The Cancel button arms itself only while a run is in flight. It
+aborts the event stream and stops the backend between stages.
+
+**Updates.** Packaged builds check GitHub Releases shortly after launch,
+download in the background, and install when Trace quits. There is no update
+prompt to click.
+
+---
+
+## Privacy and safety
+
+- **The backend binds loopback only.** A non-loopback bind address is rejected
+  at startup; Trace refuses to expose itself to your network.
+- **Trace never reads your clipboard.** The capability exists in the API and is
+  hardcoded off in the desktop app.
+- **Secrets are redacted** before anything is sent: API keys, bearer tokens,
+  `sk-…`, `ghp_…` and Slack `xox…` patterns are stripped from the model payload.
+- **Screenshots live in memory plus one temp file**, which is deleted after the
+  run. They are not retained.
+- **Auto-fix is failure-closed.** No backup, no write. Writes are atomic
+  (temp file plus rename) and refused outside the project root.
+- **Scanning is bounded.** `.git`, `node_modules`, `__pycache__`, virtualenvs,
+  build output and caches are excluded; only allowlisted text extensions are read;
+  diagnostics run only allowlisted installed tools with timeouts. Project scripts
+  are never executed.
+
+> ### The default model runs in the cloud
+>
+> `gemma4:31b-cloud` is an **Ollama cloud** model. It is not local-only. Code
+> excerpts, screenshots, window titles and terminal tails included in an
+> investigation may be processed by Ollama's cloud service.
+>
+> Trace minimises what it sends — a 24k character budget, downscaled screenshots,
+> tail-only log output — but you should know this before you submit a proprietary
+> codebase. To stay local, pull a local model and point `TRACE_MODEL` at it.
+
+---
+
+## Configuration
+
+Everything is environment-overridable; nothing is stored in a config file.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `TRACE_MODEL` | `gemma4:31b-cloud` | Model name |
+| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama endpoint |
+| `OLLAMA_API_KEY` | *(unset)* | Bearer token, if the endpoint needs one |
+| `TRACE_BIND_HOST` | `127.0.0.1` | Must stay loopback |
+| `TRACE_BIND_PORT` | `3777` | Backend port |
+| `TRACE_CONNECT_TIMEOUT_S` | `5` | Connect timeout |
+| `TRACE_READ_TIMEOUT_S` | `120` | Read timeout — raise for large models |
+| `TRACE_ALLOW_FILE_EDITS` | `1` | `0` disables every auto-fix and apply-fix write |
+| `TRACE_ALLOW_TESTS` | `0` | `1` opts into allowlisted test-runner output |
+| `TRACE_HISTORY` | `1` | `0` disables the investigation journal |
+| `TRACE_HISTORY_MAX` | `500` | Journal entries kept |
+| `TRACE_HISTORY_DIR` | `%LOCALAPPDATA%\Trace\history` | Where reports are written |
+| `TRACE_PYTHON` | `python` | Interpreter the desktop app uses to spawn the backend |
+
+Useful Electron flags: `--project-dir DIR`, `--backend-port N`, `--user-data-dir DIR`,
+and `--smoke` for the headless self-test.
+
+---
+
+## What Trace does not do
+
+Stated plainly, because a debugging tool that overstates itself is the exact
+problem it exists to solve:
+
+- **No settings UI.** Perch position, quiet hours and notification preferences
+  can only be changed by editing `trace-settings.json` in the user-data directory.
+- **`Open at line N` uses your OS default handler.** It opens the file; jumping
+  to the line depends on editor integration that is not implemented.
+- **No dry-run preview.** The backend supports `dry_run`, but there is no
+  preview button — apply is verified server-side at the moment of writing.
+- **History is capped at 50** with no pagination.
+- **Backups are never cleaned up.** Delete `*.trace-bak` files yourself.
+- **The window is not draggable and not click-through.**
+- **Missing Ollama is not detected up front.** Trace starts and looks healthy;
+  if the model is unreachable you get a completed report with low confidence
+  rather than an error.
+- **Only Windows installers are published.**
+
+---
+
+## Development
+
+```powershell
+python -m unittest discover -s tests -v     # 136 tests
+cd electron; npm test                        # node --test
+cd electron; npm run build                   # tsc + asset copy
+cd electron; npm run smoke                   # headless end-to-end self-test
+```
+
+### Layout
+
+```
+trace_backend/          L3 model client  →  L2 orchestrator  →  L1 HTTP host
+  ollama_client.py        only thing that talks to Ollama
+  investigation_engine.py the 10-stage pipeline
+  validator.py            checks every cited path and line
+  project_inspector.py    bounded, redacted project reads
+  server.py               loopback API, SSE, cancel, apply-fix
+
+electron/src/
+  main/                   window, tray, backend supervisor, IPC
+  preload.ts              the entire renderer-facing API surface
+  renderer/neo/           the floating companion
+  renderer/results.ts     the results workspace
+
+trace_ui/               zero-dependency tkinter fallback
+docs/API_CONTRACT.md    every route, request and response shape
+docs/ARCHITECTURE.md    the component split
+```
+
+Layering is enforced by tests, not convention: `tests/test_layering.py` fails the
+build if the model client reaches into the orchestrator, or the server reaches
+into the evidence layer. `tests/test_frontend_guards.py` asserts the renderer
+never imports Electron, never names a backend URL, and never touches Ollama
+directly.
+
+### The API
+
+Every capability the UI has is a documented loopback route. Start the backend
+and talk to it with curl:
 
 ```powershell
 curl -X POST http://127.0.0.1:3777/api/v1/investigations `
   -H "Content-Type: application/json" `
-  -d '{"request_text":"App crashes on start","project_dir":"C:/path/to/project","include_screenshot":true}'
+  -d '{"request_text":"App crashes on start","project_dir":"C:/path/to/project"}'
 # → {"investigation_id":"inv-..."}
-curl http://127.0.0.1:3777/api/v1/investigations/inv-...
-curl -N http://127.0.0.1:3777/api/v1/investigations/inv-.../events  # SSE
+
+curl -N http://127.0.0.1:3777/api/v1/investigations/inv-.../events   # SSE
+curl http://127.0.0.1:3777/api/v1/investigations/inv-...             # status
 ```
 
-## Privacy & security
+Full contract in [docs/API_CONTRACT.md](docs/API_CONTRACT.md).
 
-- Server binds **loopback only** (`127.0.0.1`); non-loopback bind is rejected.
-- **Cloud disclosure:** `gemma4:31b-cloud` may process submitted context through **Ollama's cloud service** — it is NOT local-only. The backend minimises payload (24k-char budget, screenshot downscale, tail-only logs) and redacts secret-like patterns, but review what you submit.
-- Clipboard read only when `include_clipboard: true`.
-- Screenshots live in memory + one temp file, deleted after analysis (`dispose()` / `temporary_capture()`); never retained.
-- Excluded from scanning: `.git`, `node_modules`, `__pycache__`, `.venv`/`venv`, `build`/`dist`/`target`, caches, secrets.
-- Diagnostics run only allowlisted installed tools (`py_compile`, `ruff`, `mypy`, `tsc`, `eslint`, `cargo check`, `go vet`, `dotnet build`) with timeouts. Project scripts are never executed.
-- Safe auto-fix: ask with `auto_fix: true` (or tick "Fix it for me") and Trace applies the VERIFIED patch straight to the file — with a `*.trace-bak` backup per file — instead of popping a results window. Unverified patches are never written (review-only + `Apply fix` button stays disabled). Disable all edits with `TRACE_ALLOW_FILE_EDITS=0`.
-- Code intelligence: symbol search, file outlines (AST for Python), complexity notes, and opt-in test output (`run_tests: true` + `TRACE_ALLOW_TESTS=1`, allowlisted runners only) feed the model real definitions instead of guesses.
+---
 
-## Limitations
-
-- Active-window capture is best-effort (cursor-monitor fallback on Windows); minimise Trace itself before capture.
-- Vision requires a multimodal-capable Ollama setup; otherwise analysis uses code/diagnostics + error text.
-- Model verdicts are **not assumed correct**: confidence + evidence + unverified labels; unknown project → asks for folder instead of inventing.
-- `open-file` line navigation depends on OS/editor integration (best-effort).
-- Language diagnostics depend on tools installed on the machine.
-
-## Desktop releases
-
-Windows installers are published from tags such as `v0.4.1` at
-[github.com/imbdy/Trace/releases](https://github.com/imbdy/Trace/releases).
-The installer includes the loopback backend, so Python is not required on the
-user's machine. Installed copies check GitHub Releases in the background and
-download updates automatically; the update is applied when Trace restarts.
-
-To publish a release after changing the Electron version in
-`electron/package.json`:
-
-```powershell
-git tag v0.4.1
-git push origin v0.4.1
-```
-
-The GitHub Actions workflow builds the backend, creates the Windows NSIS
-installer, and publishes the release assets.
-
-## Tests
-
-```powershell
-python -m unittest discover -s tests -v
-```
-
-For the desktop renderer, run `npm test` from `electron` as well.
-
-Covers: file/line verification, report parsing/malformed output, Ollama
-failures (refused/timeout/auth/model-missing/cancel/streaming), pipeline
-cancellation, missing-project honesty, screenshot temp cleanup, inspector
-safety (traversal/excludes/secrets), server loopback + start/poll flow.
+<div align="center">
+  <sub>Trace is independent software. It has no connection to, and no knowledge
+  of, any other product — it only reads the project you point it at.</sub>
+</div>
