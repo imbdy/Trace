@@ -9,22 +9,131 @@ discipline while adopting the shape that makes modern agent frameworks
   - the pipeline is a declared graph of named nodes over shared typed state,
     instead of a thousand-line if/elif method;
   - nodes route to the next node by name (conditional edges);
-  - a :meth:`Graph.parallel` node fans work out to independent branches on a
-    bounded thread pool and fans results back in through a merge function,
-    with per-branch fault isolation and a sequential fallback;
+  - :meth:`Graph.add_parallel` nodes fan work out to independent branches on
+    a bounded thread pool and fan results back in through a merge function,
+    with per-branch fault isolation, per-branch timings, and a sequential
+    fallback;
   - bounded repair loops (e.g. re-ask the model when it returned malformed
     JSON) are expressed the same way as any other transition;
-  - a cycle guard + a visited-node trace keep every run inspectable.
+  - a cycle guard + a visited-node trace + per-branch timings keep every run
+    inspectable (the trace lands in the final report's evidence summary).
 
 Out of the box this is a *finite, auditable* graph: a fixed number of steps,
 every node ending in a stage event the UI can render, every attribute the
 model is allowed to cite backed by a real read. Leave it stdlib-only — the
 layering tests enforce that on purpose.
+
+How parallel nodes work
+=======================
+Read this section and you know everything — you do not need to open the
+engine to understand the parallelism.
+
+The mechanics (inside ``add_parallel``)
+---------------------------------------
+::
+
+        ┌────────── one node, N independent branches ──────────┐
+        │  caller thread                    workers            │
+        │                                                      │
+        │  run(state) ──submit──▶  [branch A][branch B][C]     │
+        │        │                 ▲       ▲                   │
+        │        │ result collect ─┘       ┘  (bounded pool,   │
+        │        ▼                    max 2..8 threads)        │
+        │  merge(state, results, timings)                      │
+        │        │   ◀─ serial join on the caller thread       │
+        │        ▼                                             │
+        │  returns next node name (conditional edge)           │
+        └──────────────────────────────────────────────────────┘
+
+1.  **Fan-out.** ``add_parallel(name, {"keyA": fnA, "keyB": fnB}, merge)``
+    registers ONE node named ``name``. When execution reaches it, each
+    branch callable ``fn(state)`` is submitted to a
+    ``ThreadPoolExecutor(max_workers=max(2, min(4, len(branches))))`` and
+    runs *concurrently* — real parallel collection (a screenshot while the
+    window context is gathered; diagnostics while tests run).
+2.  **Fault isolation.** A branch that raises is recorded as ``None`` for
+    its key — the other branches are unaffected and the pipeline continues.
+    Exceptions are deliberately not hidden: the merge (and finally the
+    report) turns them into honest warnings. The ONE exception type that is
+    never swallowed is the graph's ``cancel_exc_type`` (Trace passes
+    ``InvestigationCancelled``): it is re-raised immediately so Cancel is
+    prompt, not delayed behind a 120 s model call.
+3.  **Fan-in (merge).** When every branch has settled, ``merge(state,
+    results, timings)`` runs serialized on the caller thread — the state is
+    never mutated from two threads at once. ``results`` maps branch key →
+    value (``None`` if that branch failed); ``timings`` maps branch key →
+    seconds (faults get a timing too). The merge writes into the shared
+    state and returns the name of the next node — that return IS the
+    conditional edge leaving the parallel node.
+4.  **Accounting.** The timings and the fan-out count are recorded on the
+    :class:`GraphRun` trace attached to the state; Trace appends them to the
+    final report's evidence summary, so the UI can show "capture:
+    screenshot 1.2s · context 0.0s" without any extra machinery.
+5.  **Fallbacks, in order.**
+    - ``len(branches) == 1`` → runs inline on the caller thread (no pool).
+    - The pool itself fails to start → branches run sequentially, in
+      submission order, with identical isolation/cancel semantics.
+      Parallelism changes speed, never results.
+
+Guarantees worth remembering
+----------------------------
+- **Submission order is the result order**: branch keys are stable, so
+  downstream code (and tests) see deterministic data no matter which
+  thread finished first.
+- **Between-node cancellation**: ``run`` re-checks the cancel event before
+  every node and before every branch future, so a cancelled run stops at
+  the next collection point, not when everything happens to finish.
+- **The state is single-writer per branch**: branches may read anything on
+  the state but should return values rather than mutate drift-prone
+  surfaces; the merge is where shared state is written.
+
+Where Trace actually uses it (the whole map — no other files needed)
+--------------------------------------------------------------------
+``investigation_engine.py`` wires exactly two parallel nodes (this file is
+generic; the engine just declares the branches):
+
+=================  ==================================  =====================================
+graph node         branches (key → what runs)          merged into (merge fn)
+=================  ==================================  =====================================
+``capture``        ``screenshot`` → capture_screenshot  `_capture_merge` → ``project_root``
+                    (mss; fast, native)
+                   ``context``    → collect_local_
+                    context (window title, CWD,
+                    editor selection; cheap)
+``collect``        ``diagnostics``    → collect_diag_   `_collect_merge` → ``analyze``
+                    nostics: ruff/mypy/tsc/eslint/
+                    cargo-check/go-vet… (subprocesses)
+                   ``tests``       → run_project_tests
+                    (OPT-IN only; skipped honestly
+                    in explain mode)
+                   ``intelligence`` → _gather_intel…
+                   ligence: parallel keyword searches,
+                   symbol lookups, outlines, JSON
+                   config checks, TODO/FIXME anchors,
+                   bounded PROJECT TREE
+=================  ==================================  =====================================
+
+Everything else runs as plain sequential nodes with conditional routing:
+
+``receive → capture_start → capture∥ → project_root → extract (skip ⇐
+explain) → read (parallel read batches) → collect∥ → analyze → validate ⇢
+repair? (one bounded re-ask on malformed JSON) ⇢ apply_fix? (auto_fix) →
+report``
+
+Honest aborts route to ``report`` with a low-confidence verdict; the abort
+paths (invalid request, unknown project root, model unreachable) are also
+plain nodes. So: two fan-out points, one repair loop, one apply-fix
+branch — that is the entire concurrency story of the Trace agent.
+
+Introspection: ``print(graph.describe())`` prints every node and its kind
+(no need to read branch code), and ``GraphRun.summary()`` /
+``GraphRun.parallel_timings`` report what actually ran, how fast, per run.
 """
 
 from __future__ import annotations
 
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -42,11 +151,23 @@ class GraphRun:
     visited: list[str] = field(default_factory=list)
     parallel_fanouts: int = 0
     steps_hit_limit: bool = False
+    # node-name → {branch-key → seconds}; populated by add_parallel nodes.
+    parallel_timings: dict[str, dict[str, float]] = field(default_factory=dict)
+
+    def timings_text(self) -> str:
+        """One compact line: every parallel fan-out with branch durations."""
+        parts = []
+        for node, d in self.parallel_timings.items():
+            inner = " · ".join(f"{k} {v:.2f}s" for k, v in d.items())
+            parts.append(f"{node}: {inner}")
+        return "; ".join(parts)
 
     def summary(self) -> str:
         path = " → ".join(self.visited) or "(empty)"
         extra = f", {self.parallel_fanouts} parallel fan-out(s)" \
             if self.parallel_fanouts else ""
+        if self.parallel_timings:
+            extra += f" | {self.timings_text()}"
         if self.steps_hit_limit:
             extra += " (cycle guard tripped)"
         return f"{self.name}: {path}{extra}"
@@ -70,6 +191,10 @@ class Graph:
                  cancel_exc_type: type[BaseException] | None = None):
         self.name = name
         self._nodes: dict[str, NodeFn] = {}
+        # node-name → human description ("node" / "parallel: a ∣ b ∣ c"),
+        # used by describe() so the workflow can be reviewed without opening
+        # the branch implementations.
+        self._kinds: dict[str, str] = {}
         # The exception type that means "the user cancelled": parallel
         # branches re-raise it immediately instead of recording an error.
         self._cancel_exc_type = cancel_exc_type
@@ -82,6 +207,7 @@ class Graph:
         if name in self._nodes:
             raise ValueError(f"{self.name}: duplicate node {name!r}")
         self._nodes[name] = fn
+        self._kinds[name] = "node"
         return self
 
     # -- parallel fan-out / fan-in ------------------------------------------
