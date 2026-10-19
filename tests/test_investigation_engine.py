@@ -204,6 +204,101 @@ class TestEngine(unittest.TestCase):
         self.assertFalse(Path(fd_path).exists())
         self.assertIsNone(r.temp_path)
 
+    def test_evidence_summary_records_graph_trace(self):
+        """The agent graph's visited path is visible in the evidence —
+        transparency about how the verdict was produced."""
+        engine, _ = self._engine()
+        req = InvestigationRequest(
+            request_text="AttributeError in app.py",
+            project_dir=str(self.root), include_screenshot=False)
+        with mock.patch.object(eng_mod, "collect_diagnostics", return_value=[]):
+            report = engine.investigate(req)
+        self.assertIn("trace-investigation", report.evidence_summary)
+
+
+class TestGraphBehaviors(unittest.TestCase):
+    """New agent-graph capabilities: bounded repair loop + parallel resilience."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "pyproject.toml").write_text("[project]\nname='x'\n")
+        (self.root / "app.py").write_text(
+            "def boom(x):\n    return x.strip()\n\n\nboom(None)\n")
+
+    def _engine(self, responses: list[str]):
+        ollama = _QueueOllama(responses)
+        return InvestigationEngine(_cfg(), ollama=ollama), ollama
+
+    def test_malformed_output_repairs_once_then_verifies(self):
+        """Garbage JSON → one bounded repair re-ask → good verdict verified."""
+        queue_engine, queue_ollama = self._engine(["not json at all", GOOD_JSON])
+        req = InvestigationRequest(
+            request_text="AttributeError in app.py",
+            project_dir=str(self.root), include_screenshot=False)
+        with mock.patch.object(eng_mod, "collect_diagnostics", return_value=[]):
+            report = queue_engine.investigate(req)
+        self.assertEqual(queue_ollama.calls, 2, "malformed verdict must be re-asked once")
+        self.assertTrue(report.findings)
+        verified = [f for f in report.findings if f.verified]
+        self.assertTrue(verified, "repaired verdict must still pass validation")
+
+    def test_repair_never_loops_forever(self):
+        """Two malformed replies → the run degrades honestly, calls stop at 2."""
+        engine, ollama = self._engine(["not json", "still not json"])
+        req = InvestigationRequest(
+            request_text="AttributeError in app.py",
+            project_dir=str(self.root), include_screenshot=False)
+        with mock.patch.object(eng_mod, "collect_diagnostics", return_value=[]):
+            report = engine.investigate(req)
+        self.assertEqual(ollama.calls, 2)
+        self.assertEqual(report.confidence, "low")
+        self.assertTrue(any("Malformed model output" in w
+                            for w in report.warnings))
+
+    def test_repair_unavailable_degrades_honest(self):
+        """If the repair re-ask itself fails, the honest low-confidence
+        report is produced — no crash, no fabrication."""
+        engine, ollama = self._engine(["not json", "not json either"])
+        req = InvestigationRequest(
+            request_text="AttributeError in app.py",
+            project_dir=str(self.root), include_screenshot=False)
+        with mock.patch.object(eng_mod, "collect_diagnostics", return_value=[]):
+            report = engine.investigate(req)
+        self.assertEqual(report.confidence, "low")
+
+    def test_collection_failure_is_recorded_not_fatal(self):
+        """A tool that raises inside a parallel branch must degrade to a
+        warning, never crash the pipeline."""
+        engine, _ = self._engine([GOOD_JSON])
+
+        def broken(*a, **kw):
+            raise RuntimeError("linter subprocess exploded")
+
+        with mock.patch.object(eng_mod, "collect_diagnostics", new=broken):
+            req = InvestigationRequest(
+                request_text="AttributeError in app.py",
+                project_dir=str(self.root), include_screenshot=False)
+            report = engine.investigate(req)
+        self.assertTrue(any("Diagnostics collection failed" in w
+                            for w in report.warnings))
+        self.assertTrue(report.findings)
+
+
+class _QueueOllama:
+    """Stub Ollama client that returns queued responses in order."""
+
+    def __init__(self, responses: list[str]):
+        self.responses = list(responses)
+        self.calls = 0
+        self.last_messages: list = []
+
+    def chat(self, messages, **kwargs):
+        self.calls += 1
+        self.last_messages = messages
+        return self.responses[min(self.calls, len(self.responses)) - 1]
+
 
 class TestFollowUp(unittest.TestCase):
     """Feature 2: asking a follow-up question about a prior verdict."""
