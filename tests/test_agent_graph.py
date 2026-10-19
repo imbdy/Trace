@@ -89,7 +89,7 @@ class TestParallelFanOut(unittest.TestCase):
             seen.append("b")
             return "B"
 
-        def merge(state, results):
+        def merge(state, results, timings=None):
             state.value.append(results)
             return END
 
@@ -109,7 +109,7 @@ class TestParallelFanOut(unittest.TestCase):
         def good(state):
             return "fine"
 
-        def merge(state, results):
+        def merge(state, results, timings=None):
             state.value.append(results)
             return END
 
@@ -134,7 +134,7 @@ class TestParallelFanOut(unittest.TestCase):
             _t.sleep(0.35)
             return "done"
 
-        def merge(state, results):
+        def merge(state, results, timings=None):
             return END
 
         g.add_parallel("joint", {"hang": hang, "slow": slow}, merge=merge)
@@ -145,11 +145,70 @@ class TestParallelFanOut(unittest.TestCase):
     def test_run_trace_counts_fanouts(self):
         g = Graph("count", cancel_exc_type=KeyboardInterrupt)
         g.add_parallel("joint", {"a": lambda s: "a", "b": lambda s: "b"},
-                       merge=lambda s, r: END)
+                       merge=lambda s, r, t=None: END)
         s = _State()
         trace = g.run(s, "joint")
         self.assertEqual(trace.parallel_fanouts, 1)
         self.assertIsInstance(trace, GraphRun)
+
+    def test_merge_receives_timings_and_trace_records_them(self):
+        import time as _t
+
+        g = Graph("timed", cancel_exc_type=KeyboardInterrupt)
+        captured = {}
+
+        def slow(state):
+            _t.sleep(0.02)
+            return "x"
+
+        def quick(state):
+            return "y"
+
+        def merge(state, results, timings):
+            captured.update(timings)
+            return END
+
+        g.add_parallel("joint", {"slow": slow, "quick": quick}, merge=merge)
+        s = _State()
+        trace = g.run(s, "joint")
+        self.assertEqual(set(captured), {"slow", "quick"})
+        self.assertGreaterEqual(captured["slow"], 0.01)
+        self.assertGreaterEqual(captured["quick"], 0.0)
+        self.assertEqual(set(trace.parallel_timings["joint"]),
+                         {"slow", "quick"})
+        self.assertIn("joint:", trace.timings_text())
+
+    def test_timings_recorded_for_single_branch_node(self):
+        g = Graph("single", cancel_exc_type=KeyboardInterrupt)
+        seen = {}
+
+        def only(state):
+            return 42
+
+        def merge(state, results, timings):
+            seen.update(timings)
+            return END
+
+        g.add_parallel("solo", {"only": only}, merge=merge)
+        trace = g.run(_State(), "solo")
+        self.assertEqual(seen, {"only": trace.parallel_timings["solo"]["only"]})
+        self.assertGreaterEqual(seen["only"], 0.0)
+        # A single branch is not a fan-out.
+        self.assertEqual(trace.parallel_fanouts, 0)
+
+
+class TestIntrospection(unittest.TestCase):
+    def test_describe_lists_node_kinds(self):
+        g = Graph("plan", cancel_exc_type=KeyboardInterrupt)
+        g.add_node("start", lambda s: "joint")
+        g.add_parallel("joint", {"a": lambda s: "A", "b": lambda s: "B"},
+                       merge=lambda s, r, t=None: END)
+        g.add_node("finish", lambda s: None)
+        text = g.describe()
+        self.assertIn("plan: 3 nodes (cancel = KeyboardInterrupt)", text)
+        self.assertIn("start", text)
+        self.assertIn("parallel[a, b]", text)
+        self.assertIn("finish", text)
 
 
 if __name__ == "__main__":

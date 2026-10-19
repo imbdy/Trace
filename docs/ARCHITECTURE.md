@@ -73,6 +73,15 @@ bloat. What we keep is the discipline:
 - **Cycle guard + visited trace** — `GraphRun.summary()` (the node path
   taken) lands in `report.evidence_summary`, so the UI and the journal can
   show how a verdict was produced.
+- **Per-branch timings** — every parallel branch is timed; the report's
+  evidence summary gets a `Timing: capture: screenshot 0.21s · context
+  0.02s; collect: …` line, so the wall-clock cost of each collection is as
+  visible as the evidence itself.
+- **Self-description** — the entire workflow is one option-free call away:
+  `python -c "from trace_backend.investigation_engine import
+  _build_investigation_graph as b; print(b().describe())"` prints every
+  node and its kind (`parallel[a, b]` etc.). The runtime's module docstring
+  is the full written explanation of how the parallelism works.
 
 ```
 receive → capture_start ─┬─ screenshot ∥ capture ─┬→ project_root
@@ -89,6 +98,11 @@ collect ─┬─ diagnostics ∥ (opt-in) tests ∥ intelligence ─┬→ anal
                                                         ▼
                                                       report
 ```
+
+The `analyze` call streams: deltas become throttled `model_analysis`
+"thinking ▸ …" SSE events (`_stream_thinker`, ≤24 ticks × 480 chars per
+call, newest-90-chars tails). Same event shape as every other stage
+event — no contract change; the UI just stops staring at silence.
 
 The model-driven `repair` node is the only edge into the model beyond
 `analyze` — one bounded re-ask with a JSON-only prompt. Every other node's
