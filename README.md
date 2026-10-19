@@ -97,11 +97,34 @@ receive  →  screenshot  →  context  →  project_root  →  error_extract
         →  read_files  →  diagnostics  →  model_analysis  →  validate  →  report
 ```
 
-- **`error_extract` is skipped in Explain mode**, and stack-frame files are not
-  pre-loaded — you are not debugging, you are asking what something does.
+The pipeline runs as an explicit agent graph (a ~200-line, stdlib-only
+runtime — same shape as LangGraph: named nodes, conditional edges, parallel
+fan-out/fan-in, bounded self-repair), so structure is auditable rather than
+buried in nested ifs:
+
+- **Independent collection is parallel.** Screenshot ∥ local context,
+  file reads in batches, diagnostics ∥ tests ∥ code intelligence, and
+  per-finding git enrichment all run concurrently on small bounded thread
+  pools — with sequential fallbacks and per-branch fault isolation. A slow
+  linter can no longer stall a screenshot.
+- **The model can hold more evidence.** SEARCH HITS from whole-project
+  keyword scans (parallel), symbol-definition locations, per-file outlines
+  and complexity notes, top-level `*.json` syntax checks, TODO/FIXME
+  anchors, parsed test-failure `file:line` anchors, and — when nothing
+  could be read — an honest PROJECT TREE / RECENTLY MODIFIED section for
+  orientation. Everything is real disk data; the validator still gates
+  anything the model cites from it.
+- **Malformed model JSON gets one bounded repair.** If the verdict isn't
+  valid JSON, Trace re-asks once with a JSON-only prompt. Still broken? An
+  honest low-confidence report; never a fabricated one.
+- **The graph path is in the evidence.** `Evidence` shows which nodes the
+  run actually visited (`receive → capture ∥ → … → report`), so a verdict
+  is inspectable end-to-end.
+- **`error_extract` is skipped in Explain mode**, and stack-frame files are
+  not pre-loaded — you are not debugging, you are asking what something does.
 - **`validate` is the important one.** It is what opens each cited path on disk.
 - Follow-up questions re-run a six-stage subset against the files the previous
-  report already cited, and pass through the same validator.
+  report already cited (re-read in parallel), and pass through the same validator.
 
 ---
 
@@ -259,7 +282,7 @@ problem it exists to solve:
 ## Development
 
 ```powershell
-python -m unittest discover -s tests -v     # 136 tests
+python -m unittest discover -s tests -v     # 164 tests
 cd electron; npm test                        # node --test
 cd electron; npm run build                   # tsc + asset copy
 cd electron; npm run smoke                   # headless end-to-end self-test
@@ -268,11 +291,17 @@ cd electron; npm run smoke                   # headless end-to-end self-test
 ### Layout
 
 ```
-trace_backend/          L3 model client  →  L2 orchestrator  →  L1 HTTP host
+trace_backend/          L3 model client  →  L2 orchestrator (agent graph)  →  L1 HTTP host
+  agent_graph.py          stdlib-only graph runtime: nodes, conditional
+                          routes, parallel fan-out/fan-in, cycle guard,
+                          visited-node trace
   ollama_client.py        only thing that talks to Ollama
-  investigation_engine.py the 10-stage pipeline
+  investigation_engine.py the 10-stage pipeline declared as graph nodes
   validator.py            checks every cited path and line
   project_inspector.py    bounded, redacted project reads
+  code_tools.py           search/outline/symbols/recency/tree/config-checks/
+                          annotations/test-runner helpers (never executes
+                          project scripts)
   server.py               loopback API, SSE, cancel, apply-fix
 
 electron/src/
