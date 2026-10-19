@@ -10,3 +10,4 @@ electron/resources/backend/
 test_output*.txt
 *.trace-bak
 *.trace-tmp
+.env

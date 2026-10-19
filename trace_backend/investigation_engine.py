@@ -1146,7 +1146,8 @@ class InvestigationEngine:
 
         try:
             try:
-                _GRAPH.run(state, start="receive", cancel=cancel_event)
+                _GRAPH.run(state, start="receive", cancel=cancel_event,
+                           max_steps=self.config.max_iterations)
             finally:
                 if state.shot is not None:
                     dispose(state.shot)
