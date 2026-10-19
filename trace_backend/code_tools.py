@@ -1,19 +1,30 @@
-"""Code intelligence tools: search, outlines, tests, complexity.
+"""Code intelligence tools: search, outlines, tests, complexity, structure.
 
 These make Trace better at problem-solving and coding without ever running
 untrusted project code by default:
 
 - :func:`search_text` — bounded, exclude-aware grep over the project.
+- :func:`search_regex` — the same grep with a real regex pattern.
+- :func:`search_many` / :func:`find_symbols` — several searches or symbol
+  lookups run concurrently on a bounded thread pool (walks are expensive).
 - :func:`file_outline` — classes/functions with line numbers (AST for Python,
   regex for JS/TS/Go/Rust/Java/C#).
 - :func:`find_symbol` — locate a symbol definition across the project.
+- :func:`recent_files` — most-recently-modified readable files (recency truth
+  when nothing matched the query).
+- :func:`project_tree` — bounded directory overview so the model can orient.
+- :func:`parse_test_failures` — turn test-runner output into file:line anchors.
+- :func:`check_json_config` — syntax-check top-level *.json config files.
+- :func:`scan_annotations` — TODO/FIXME/XXX/HACK anchors in already-read files.
 - :func:`detect_test_command` — allowlisted test runner for this project.
 - :func:`run_project_tests` — runs ONLY the detected allowlisted command and
   ONLY when ``allowed=True`` (opt-in via config); truncated output.
 - :func:`complexity_snapshot` — cheap LOC / long-function heuristics.
 
 Stdlib only. Imports only ``project_inspector`` (excludes + safe reads).
-Never imports the model, server, history, or UI code.
+Never imports the model, server, history, or UI code. Every parallel helper
+uses a bounded thread pool and a sequential fallback, and each function is
+exception-safe: a tool failing must never break an investigation.
 """
 
 from __future__ import annotations
@@ -23,6 +34,8 @@ import os
 import re
 import shutil
 import subprocess
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -62,8 +75,12 @@ _FUNC_PATTERNS = [
 
 
 def search_text(root: Path, pattern: str,
-                max_hits: int = 20) -> list[TextHit]:
-    """Case-insensitive literal search over readable project files."""
+                max_hits: int = 20, *, regex: bool = False) -> list[TextHit]:
+    """Case-insensitive literal search over readable project files.
+
+    With ``regex=True`` the pattern is compiled as-is (also case-insensitive);
+    a bad or oversized regex simply yields no hits instead of raising.
+    """
     hits: list[TextHit] = []
     if root is None or not pattern or not pattern.strip():
         return hits
@@ -71,11 +88,14 @@ def search_text(root: Path, pattern: str,
         root = root.resolve()
     except OSError:
         return hits
-    needle = pattern.strip().lower()
-    if len(needle) < 2:
+    needle = pattern.strip()
+    if len(needle) < 2 or len(needle) > 200:
         return hits
     try:
-        rx = re.compile(re.escape(needle))
+        if regex:
+            rx = re.compile(needle, re.IGNORECASE)
+        else:
+            rx = re.compile(re.escape(needle.lower()))
     except re.error:
         return hits
     count_files = 0
