@@ -27,9 +27,11 @@ import json
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
+from .agent_graph import END, Graph
 from .code_fixer import apply_unified_diff
 from .code_tools import (
     complexity_snapshot,
@@ -195,17 +197,35 @@ def _enrich_git_context(root: Path | None, report: InvestigationReport) -> None:
 
     Best-effort enrichment (see git_context): only verified findings get a
     value, and any git failure simply leaves ``git_context`` empty — honest,
-    never fabricated.
+    never fabricated. Each finding's lookup is an independent git subprocess,
+    so verified findings are enriched concurrently (order preserved).
     """
     if root is None:
         return
-    for f in report.findings:
-        if not f.verified:
-            continue
+    verified = [(i, f) for i, f in enumerate(report.findings) if f.verified]
+    if not verified:
+        return
+
+    def one(item):
+        idx, f = item
         try:
-            f.git_context = finding_git_context(root, f.file_path, f.start_line)
+            return idx, finding_git_context(root, f.file_path, f.start_line)
         except Exception:  # pragma: no cover - git_context is already defensive
-            f.git_context = ""
+            return idx, ""
+
+    try:
+        with ThreadPoolExecutor(
+                max_workers=max(2, min(6, len(verified))),
+                thread_name_prefix="trace-git") as ex:
+            for idx, ctx in list(ex.map(one, verified)):
+                report.findings[idx].git_context = ctx
+    except Exception:  # sequential fallback: same behaviour, slower
+        for idx, f in verified:
+            try:
+                report.findings[idx].git_context = finding_git_context(
+                    root, f.file_path, f.start_line)
+            except Exception:
+                report.findings[idx].git_context = ""
 
 
 def _is_within(path: Path, root: Path) -> bool:
@@ -338,7 +358,7 @@ def _read_candidate_files(root: Path, query: str,
         for related in follow_imports(cand, root):
             if related in seen:
                 continue
-            if any(rel is related for rel, _t in import_jobs):
+            if any(r == related for r, _t in import_jobs):
                 continue
             if related.is_absolute():
                 target: str | Path = related
@@ -595,16 +615,467 @@ def _maybe_auto_fix(root: Path | None, report: InvestigationReport,
     return report
 
 
+# -- agent graph: state, nodes, wiring ---------------------------------------
+# The pipeline is expressed as an explicit, auditable graph (agent_graph):
+# named nodes over shared typed state, conditional routing, and parallel
+# fan-out/fan-in where collection is genuinely independent. Node functions
+# reference module-level tool names (collect_diagnostics, run_project_tests,
+# capture_screenshot, extract_error_info, collect_local_context) so the tests
+# can keep patching them at the module boundary.
+
+@dataclass
+class AgentState:
+    """Everything one investigation carries through the graph.
+
+    Evidence fields are filled by their owning node; ``abort`` + ``report``
+    terminate the run with an honest verdict (never a fabricated one);
+    ``failures`` remember degraded *collection* steps so the final report
+    can say exactly what was attempted and what broke.
+    """
+    request: InvestigationRequest
+    config: TraceConfig
+    ollama: Any
+    inv_id: str
+    cancel: threading.Event | None
+    emit: Callable[[str, str], None]
+    mode: str = "debug"  # "debug" | "explain"
+    # capture fan-out results
+    shot: ScreenshotResult | None = None
+    screenshot_b64: str | None = None
+    screenshot_note: str = "screenshots disabled by request"
+    ctx: LocalContext = field(default_factory=LocalContext)
+    # root / extract / read
+    root: Path | None = None
+    error: ErrorInfo = field(default_factory=ErrorInfo)
+    files: list = field(default_factory=list)
+    read_notes: list = field(default_factory=list)
+    seen: set = field(default_factory=set)
+    # collect fan-out results
+    diagnostics: list = field(default_factory=list)
+    intelligence: str = ""
+    test_note: str = ""
+    # analysis
+    raw: str = ""
+    repair_tried: int = 0
+    # termination / honesty notes
+    report: InvestigationReport | None = None
+    abort: bool = False
+    failures: list = field(default_factory=list)
+    needs_more: list = field(default_factory=list)
+    # graph bookkeeping (runtime attaches the live GraphRun here)
+    run_trace: Any = None
+
+
+REPAIR_SYSTEM_PROMPT = """You are Trace. Your previous reply was not valid JSON. \
+Return ONLY valid JSON with this exact schema and nothing else (no prose, no code fences):
+{"summary": str, "root_cause": str, "confidence": "low"|"medium"|"high",
+ "confidence_rationale": str, "findings": [{"title": str, "file_path": str,
+ "start_line": int, "end_line": int, "explanation": str, "evidence": str}],
+ "recommended_fix": {"description": str, "diff": str, "rationale": str},
+ "alternative_hypotheses": [str], "needs_more_info": [str], "evidence_summary": str}
+Grounding rules are unchanged: only cite file paths and line numbers that appeared in the \
+evidence bundle you were given. If you cannot reconstruct a full report, return the JSON with \
+confidence "low" and empty findings — never free text."""
+
+
+def _node_receive(state: AgentState) -> str:
+    """Validate the request; abort honestly when it is unusable."""
+    _check_cancelled(state.cancel)
+    is_explain = state.mode == "explain"
+    state.emit("receive", "Received code explanation request." if is_explain
+               else "Received debugging request.")
+    problems = state.request.validate()
+    if problems:
+        state.report = InvestigationReport(
+            investigation_id=state.inv_id,
+            summary="Invalid investigation request.",
+            root_cause="; ".join(problems), confidence="low",
+            warnings=["Invalid request: " + "; ".join(problems)])
+        state.abort = True
+        return END
+    return "capture_start"
+
+
+def _node_capture_start(state: AgentState) -> str:
+    """Announce the two capture stages, then fan out — canonical order."""
+    _check_cancelled(state.cancel)
+    if state.request.include_screenshot:
+        state.emit("screenshot",
+                   f"Capturing {state.request.screenshot_mode} screenshot…")
+    else:
+        state.emit("screenshot", "screenshots disabled by request")
+    state.emit("context", "Collecting local context…")
+    return "capture"
+
+
+def _capture_screenshot_branch(state: AgentState) -> tuple:
+    """Independent branch: capture the screenshot. Never raises."""
+    if not state.request.include_screenshot:
+        return ("idle", None)
+    try:
+        shot = capture_screenshot(mode=state.request.screenshot_mode,
+                                  max_dim=state.config.max_screenshot_dim)
+        return ("ok", shot)
+    except (ScreenshotCaptureError, ValueError) as e:
+        hint = getattr(e, "hint", "")
+        return ("unavailable", f"screenshot unavailable: {e}. {hint}".strip())
+    except Exception as e:
+        return ("failed", f"screenshot failed unexpectedly: {e}")
+
+
+def _capture_context_branch(state: AgentState) -> tuple:
+    """Independent branch: local context (window/editor/terminal inputs)."""
+    try:
+        ctx = collect_local_context(
+            editor_selection=state.request.editor_selection,
+            terminal_output=state.request.terminal_output,
+            allow_clipboard=state.request.include_clipboard,
+            project_hint=state.request.project_dir)
+        return ("ok", ctx)
+    except Exception as e:
+        return ("failed", LocalContext())
+
+
+def _capture_merge(state: AgentState, results: dict) -> str:
+    """Join the screenshot ∥ context fan-out; emit notes in canonical order."""
+    kind, payload = results.get("screenshot") or ("failed", None)
+    if kind == "ok":
+        state.shot = payload
+        state.screenshot_b64 = base64.b64encode(payload.png_bytes).decode("ascii")
+        state.screenshot_note = (f"screenshot captured via {payload.source} "
+                                 f"({payload.width}x{payload.height}, "
+                                 f"{len(payload.png_bytes)} bytes)")
+    elif kind == "unavailable":
+        state.screenshot_note = payload
+        state.emit("screenshot", payload)
+    elif kind == "failed":
+        state.screenshot_note = payload
+    # emit("screenshot", start-note) happened before the fan-out already.
+
+    ctx_kind, ctx_payload = results.get("context") or ("failed", None)
+    if ctx_kind == "ok":
+        state.ctx = ctx_payload
+    else:
+        state.failures.append(
+            "Local context collection failed; continuing without it.")
+
+    _check_cancelled(state.cancel)
+    return "project_root"
+
+
+def _node_project_root(state: AgentState) -> str:
+    _check_cancelled(state.cancel)
+    state.emit("project_root", "Identifying project root…")
+    root = find_project_root(state.request.project_dir or state.ctx.cwd)
+    if root is None:
+        msg = ("Could not identify the active project. Select the project "
+               "folder or provide the missing context.")
+        state.report = InvestigationReport(
+            investigation_id=state.inv_id,
+            summary="Project root could not be identified.",
+            root_cause="Unknown project location; no files inspected.",
+            confidence="low",
+            confidence_rationale=("No project root was identified, so no code "
+                                  "could be inspected for evidence."),
+            needs_more_info=[msg],
+            evidence_summary=f"{state.screenshot_note}\n{state.ctx.summary()}",
+            warnings=["No project files were read; refusing to invent an explanation."])
+        state.abort = True
+        return END
+    state.root = root
+    return "extract"
+
+
+def _node_extract(state: AgentState) -> str:
+    """Stack-trace extraction — skipped (honestly) in explain mode."""
+    _check_cancelled(state.cancel)
+    if state.mode == "explain":
+        state.emit("error_extract", "Skipping error extraction (explain mode).")
+        return "read"
+    state.emit("error_extract", "Extracting error message and stack trace…")
+    combined_text = "\n\n".join(t for t in [
+        state.request.request_text, state.request.terminal_output or "",
+        state.request.editor_selection or "", state.request.extra_context or ""] if t)
+    state.error = extract_error_info(combined_text)
+    return "read"
+
+
+def _node_read(state: AgentState) -> str:
+    _check_cancelled(state.cancel)
+    state.emit("read_files", f"Reading relevant files under {state.root}…")
+    is_explain = state.mode == "explain"
+    if not is_explain:
+        _read_frame_files(state.root, state.error, state.seen, state.files,
+                          state.read_notes, state.config.max_file_bytes,
+                          state.cancel)
+    query = state.request.request_text + (
+        " " + state.error.message
+        if not is_explain and state.error.message else "")
+    _read_candidate_files(state.root, query, state.seen, state.files,
+                          state.config.max_file_bytes, state.cancel)
+    if not state.files:
+        state.needs_more.append(
+            "No relevant project files could be identified. Select the project "
+            "folder, paste the error output, or name the file you suspect.")
+    return "collect"
+
+
+def _branch_diagnostics(state: AgentState) -> tuple:
+    """Linter/compiler diagnostics — independent subprocess batch."""
+    try:
+        results = collect_diagnostics(
+            state.root, [p for p, _ in state.files],
+            timeout_s=state.config.diagnostics_timeout_s)
+        return ("ok", results)
+    except Exception as e:
+        return ("fail", e)
+
+
+def _branch_tests(state: AgentState) -> tuple:
+    """Allowlisted test run — independent subprocess; debug mode only.
+
+    Explain mode must never reach the runner (the engine keeps
+    understanding separate from verification).
+    """
+    if state.mode != "explain" and state.request.run_tests:
+        try:
+            res = run_project_tests(
+                state.root, timeout_s=state.config.diagnostics_timeout_s,
+                allowed=state.config.allow_test_execution)
+            return ("ok", res)
+        except Exception as e:
+            return ("fail", e)
+    return ("skipped", None)
+
+
+def _branch_intelligence(state: AgentState) -> str:
+    try:
+        return _gather_intelligence(state.root, state.request.request_text,
+                                    state.error, state.files)
+    except Exception:
+        return ""
+
+
+def _collect_merge(state: AgentState, results: dict) -> str:
+    """Join diagnostics ∥ tests ∥ intelligence; keep the original evidence
+    order and the original opt-in honest notes."""
+    _check_cancelled(state.cancel)
+    state.emit("diagnostics", "Collecting compiler/linter diagnostics…")
+    diag_kind, diag_payload = results.get("diagnostics") or ("fail", None)
+    if diag_kind == "ok":
+        state.diagnostics = diag_payload or []
+    else:
+        state.failures.append(
+            f"Diagnostics collection failed: {diag_payload}")
+
+    test_kind, test_res = results.get("tests") or ("skipped", None)
+    if test_kind == "ok" and test_res:
+        if test_res.get("ran"):
+            state.test_note = (f"TESTS ({' '.join(test_res['command'])}): "
+                               f"{test_res.get('reason', '')}\n"
+                               f"{test_res.get('output', '')[:3000]}")
+            # Grounded failure anchors straight from the runner's output.
+            try:
+                anchors = parse_test_failures(test_res.get("output", ""))
+                if anchors:
+                    state.test_note += "\nTEST FAILURE ANCHORS:\n" + "\n".join(
+                        f"{a.path}:{a.line}" for a in anchors)
+            except Exception:
+                pass
+        else:
+            state.test_note = f"TESTS skipped: {test_res.get('reason', '')}"
+            state.needs_more.append(
+                "Test execution is opt-in (TRACE_ALLOW_TESTS=1); "
+                "enable it to include test output as evidence.")
+    elif test_kind == "fail":
+        state.failures.append(f"Test run failed: {test_res}")
+
+    state.intelligence = results.get("intelligence") or ""
+    return "analyze"
+
+
+def _node_analyze(state: AgentState) -> str:
+    """Assemble the evidence bundle and ask the model for a structured verdict."""
+    state.emit("model_analysis", "Thinking through the evidence…")
+    is_explain = state.mode == "explain"
+    bundle = build_model_context(
+        request_text=state.request.request_text, error=state.error,
+        files=state.files, diagnostics=state.diagnostics,
+        local_summary=state.ctx.summary() + "\n" + state.screenshot_note,
+        budget_chars=state.config.max_context_chars)
+    if state.intelligence:
+        bundle = (bundle + "\n\n---\n\n" + state.intelligence)[:state.config.max_context_chars]
+    if state.test_note:
+        bundle = (bundle + "\n\n---\n\n" + state.test_note)[:state.config.max_context_chars]
+    if is_explain:
+        user_prompt = (bundle + "\n\n---\n\n"
+                       "Explain the code above and return ONLY the JSON report. "
+                       "Describe what the code does, how it works, and any "
+                       "notable behavior or potential issues. Do not invent "
+                       "file paths or line numbers.")
+        system_prompt = EXPLAIN_SYSTEM_PROMPT
+    else:
+        user_prompt = (bundle + "\n\n---\n\n"
+                       "Analyze the evidence above and return ONLY the JSON report. "
+                       "Do not invent file paths or line numbers. "
+                       "Propose a minimal unified diff that applies cleanly.")
+        system_prompt = SYSTEM_PROMPT
+    messages = [{"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}]
+    if state.screenshot_b64 and state.shot is not None:
+        # Ollama vision: attach image to the user message when supported.
+        messages[-1] = {"role": "user", "content": user_prompt,
+                        "images": [state.screenshot_b64]}
+    try:
+        state.raw = state.ollama.chat(messages, stream=False,
+                                      cancel_event=state.cancel,
+                                      timeout=state.config.read_timeout_s)
+    except OllamaCancelledError as e:
+        raise InvestigationCancelled(str(e)) from e
+    except OllamaError as e:
+        hint = getattr(e, "hint", "")
+        state.report = InvestigationReport(
+            investigation_id=state.inv_id,
+            summary="Model analysis unavailable.",
+            root_cause=str(e), confidence="low",
+            confidence_rationale="No model verdict; evidence collected but not analyzed.",
+            needs_more_info=[hint] if hint else [],
+            evidence_summary=(f"{state.screenshot_note}\n{state.ctx.summary()}\n"
+                              f"Files read: {len(state.files)}. "
+                              + "; ".join(state.read_notes)[:2000]),
+            warnings=[f"Ollama error: {e}"])
+        state.abort = True
+        return END
+    return "validate"
+
+
+def _findings_are_malformed(report: InvestigationReport) -> bool:
+    """True when the model reply could not be shaped into a verdict."""
+    return any(w.startswith("Malformed model output") for w in report.warnings)
+
+
+def _node_validate(state: AgentState) -> str:
+    """The grounded-truth gate: parse, verify, route to fix/report/repair."""
+    _check_cancelled(state.cancel)
+    state.emit("validate", "Validating file paths and line numbers…")
+    report = InvestigationEngine._parse_report(state.inv_id, state.raw)
+    if _findings_are_malformed(report) and state.repair_tried < 1:
+        state.repair_tried += 1
+        return "repair"  # bounded self-repair loop: one clean re-ask
+    report = sanitize_report(state.root, report)
+    _enrich_git_context(state.root, report)
+    state.report = report
+    if state.request.auto_fix:
+        return "apply_fix"
+    return "report"
+
+
+def _node_repair(state: AgentState) -> str:
+    """Second chance for malformed JSON — the verdict must stay verifiable."""
+    state.emit("validate", "Model output was not valid JSON; asking for repair…")
+    try:
+        state.raw = state.ollama.chat(
+            [{"role": "system", "content": REPAIR_SYSTEM_PROMPT},
+             {"role": "user", "content": (
+                 "Rebuild your full report as ONLY valid JSON. "
+                 "Your previous (invalid) reply, for reference:\n\n"
+                 f"{state.raw[:4000]}")}],
+            stream=False, cancel_event=state.cancel,
+            timeout=state.config.read_timeout_s)
+    except OllamaCancelledError as e:
+        raise InvestigationCancelled(str(e)) from e
+    except OllamaError:
+        pass  # repair is best-effort; validation degrades honestly below
+    return "validate"
+
+
+def _node_apply_fix(state: AgentState) -> str:
+    state.emit("validate", "Applying the verified fix…")
+    state.report = _maybe_auto_fix(state.root, state.report, True,
+                                   state.config.allow_file_edits)
+    return "report"
+
+
+def _node_report(state: AgentState) -> str:
+    """Finalize: honest evidence summary, collected notes, collected failures."""
+    state.emit("report", "Investigation complete.")
+    report = state.report
+    if report is None:
+        report = InvestigationReport(
+            investigation_id=state.inv_id,
+            summary="Investigation ended without a verdict.",
+            root_cause="Unknown.", confidence="low",
+            warnings=["The graph finished without producing a report."])
+        state.report = report
+    if not report.evidence_summary:
+        report.evidence_summary = (
+            f"{state.screenshot_note}\n{state.ctx.summary()}\n"
+            f"Project root: {state.root}\nFiles read: {len(state.files)}")
+    if state.needs_more:
+        report.needs_more_info = [*report.needs_more_info, *state.needs_more]
+    if len(state.files) == 0:
+        report.warnings.append(
+            "Screenshot/visual evidence alone is insufficient; no code excerpts "
+            "were available for verification.")
+    for failure in state.failures:
+        report.warnings.append(failure)
+    if state.run_trace is not None and hasattr(state.run_trace, "summary"):
+        report.evidence_summary = (
+            report.evidence_summary + "\n" + state.run_trace.summary())[:4000]
+    return END
+
+
+def _build_investigation_graph() -> "Graph":
+    g = Graph("trace-investigation", cancel_exc_type=InvestigationCancelled)
+    g.add_node("receive", _node_receive)
+    g.add_node("capture_start", _node_capture_start)
+    g.add_parallel(
+        "capture",
+        {"screenshot": _capture_screenshot_branch,
+         "context": _capture_context_branch},
+        merge=_capture_merge)
+    g.add_node("project_root", _node_project_root)
+    g.add_node("extract", _node_extract)
+    g.add_node("read", _node_read)
+    g.add_parallel(
+        "collect",
+        {"diagnostics": _branch_diagnostics,
+         "tests": _branch_tests,
+         "intelligence": _branch_intelligence},
+        merge=_collect_merge)
+    g.add_node("analyze", _node_analyze)
+    g.add_node("validate", _node_validate)
+    g.add_node("repair", _node_repair)
+    g.add_node("apply_fix", _node_apply_fix)
+    g.add_node("report", _node_report)
+    return g
+
+
+_GRAPH = _build_investigation_graph()
+
+
 class InvestigationEngine:
     def __init__(self, config: TraceConfig | None = None,
                  ollama: OllamaClient | None = None):
         self.config = config or TraceConfig.from_env()
         self.ollama = ollama or OllamaClient(self.config)
 
+    # Graph node names, in execution order. The UI's five-step rail is keyed
+    # by stage names inside the events; these states map 1:1 onto them.
+    _GRAPH_NODES = ("receive", "capture(screenshot∥context)", "project_root",
+                    "extract", "read", "collect(diagnostics∥tests∥intelligence)",
+                    "analyze", "validate→repair?", "apply_fix?", "report")
+
     def investigate(self, request: InvestigationRequest,
                     progress_cb: ProgressCallback | None = None,
                     cancel_event: threading.Event | None = None,
                     investigation_id: str | None = None) -> InvestigationReport:
+        """Run the investigation through the agent graph (see agent_graph.py).
+
+        Same signature, same stage events, same honest-failure semantics as
+        before — the graph makes the routing, parallelism and the bounded
+        repair loop explicit instead of burying them in nested ifs.
+        """
         inv_id = investigation_id or new_investigation_id()
 
         def emit(stage: str, message: str):
@@ -616,200 +1087,27 @@ class InvestigationEngine:
                 except Exception:
                     pass
 
-        problems = request.validate()
-        if problems:
-            return InvestigationReport(
-                investigation_id=inv_id, summary="Invalid investigation request.",
-                root_cause="; ".join(problems), confidence="low",
-                warnings=["Invalid request: " + "; ".join(problems)])
-
-        is_explain = request.investigation_type == "explain"
-
-        # 1. receive
-        _check_cancelled(cancel_event)
-        emit("receive", "Received code explanation request." if is_explain
-             else "Received debugging request.")
-
-        # 2. screenshot
-        _check_cancelled(cancel_event)
-        shot: ScreenshotResult | None = None
-        screenshot_note = "screenshots disabled by request"
-        screenshot_b64: str | None = None
-        if request.include_screenshot:
-            try:
-                emit("screenshot", f"Capturing {request.screenshot_mode} screenshot…")
-                shot = capture_screenshot(mode=request.screenshot_mode,
-                                          max_dim=self.config.max_screenshot_dim)
-                screenshot_b64 = base64.b64encode(shot.png_bytes).decode("ascii")
-                screenshot_note = (f"screenshot captured via {shot.source} "
-                                   f"({shot.width}x{shot.height}, {len(shot.png_bytes)} bytes)")
-            except (ScreenshotCaptureError, ValueError) as e:
-                hint = getattr(e, "hint", "")
-                screenshot_note = f"screenshot unavailable: {e}. {hint}".strip()
-                emit("screenshot", screenshot_note)
-            except Exception as e:  # graceful
-                screenshot_note = f"screenshot failed unexpectedly: {e}"
-        else:
-            emit("screenshot", screenshot_note)
+        state = AgentState(
+            request=request, config=self.config, ollama=self.ollama,
+            inv_id=inv_id, cancel=cancel_event, emit=emit,
+            mode=request.investigation_type)
 
         try:
-            # 3. context
-            _check_cancelled(cancel_event)
-            emit("context", "Collecting local context…")
-            ctx: LocalContext = collect_local_context(
-                editor_selection=request.editor_selection,
-                terminal_output=request.terminal_output,
-                allow_clipboard=request.include_clipboard,
-                project_hint=request.project_dir)
-
-            # 4. project root
-            _check_cancelled(cancel_event)
-            emit("project_root", "Identifying project root…")
-            root = find_project_root(request.project_dir or ctx.cwd)
-            needs_more: list[str] = []
-            if root is None:
-                msg = ("Could not identify the active project. Select the project "
-                       "folder or provide the missing context.")
-                return InvestigationReport(
-                    investigation_id=inv_id,
-                    summary="Project root could not be identified.",
-                    root_cause="Unknown project location; no files inspected.",
-                    confidence="low",
-                    confidence_rationale="No project root was identified, so no code could be inspected for evidence.",
-                    needs_more_info=[msg],
-                    evidence_summary=f"{screenshot_note}\n{ctx.summary()}",
-                    warnings=["No project files were read; refusing to invent an explanation."])
-
-            # 5. error extraction (skipped for explain mode)
-            _check_cancelled(cancel_event)
-            if is_explain:
-                emit("error_extract", "Skipping error extraction (explain mode).")
-                error = ErrorInfo()
-            else:
-                emit("error_extract", "Extracting error message and stack trace…")
-                combined_text = "\n\n".join(t for t in [
-                    request.request_text, request.terminal_output or "",
-                    request.editor_selection or "", request.extra_context or ""] if t)
-                error: ErrorInfo = extract_error_info(combined_text)
-
-            # 6. read files (frames first, then ranked candidates + imports)
-            _check_cancelled(cancel_event)
-            emit("read_files", f"Reading relevant files under {root}…")
-            files: list[tuple[Path, str]] = []
-            read_notes: list[str] = []
-            seen: set[Path] = set()
-            if not is_explain:
-                _read_frame_files(root, error, seen, files, read_notes,
-                                  self.config.max_file_bytes, cancel_event)
-            query = request.request_text + (
-                " " + error.message if not is_explain and error.message else "")
-            _read_candidate_files(
-                root, query, seen, files, self.config.max_file_bytes,
-                cancel_event)
-            if not files:
-                needs_more.append(
-                    "No relevant project files could be identified. Select the project "
-                    "folder, paste the error output, or name the file you suspect.")
-
-            # 7. diagnostics (+ opt-in tests + code intelligence; tests only
-            #    in debug mode — explain mode focuses on understanding code)
-            _check_cancelled(cancel_event)
-            emit("diagnostics", "Collecting compiler/linter diagnostics…")
-            diagnostics = collect_diagnostics(
-                root, [p for p, _ in files],
-                timeout_s=self.config.diagnostics_timeout_s)
-            _check_cancelled(cancel_event)
-            intelligence = _code_intelligence_section(root, error, files)
-            test_note = ""
-            if not is_explain and request.run_tests:
-                test_res = run_project_tests(
-                    root, timeout_s=self.config.diagnostics_timeout_s,
-                    allowed=self.config.allow_test_execution)
-                if test_res.get("ran"):
-                    test_note = (f"TESTS ({' '.join(test_res['command'])}): "
-                                 f"{test_res.get('reason', '')}\n"
-                                 f"{test_res.get('output', '')[:3000]}")
-                else:
-                    test_note = f"TESTS skipped: {test_res.get('reason', '')}"
-                    needs_more.append(
-                        "Test execution is opt-in (TRACE_ALLOW_TESTS=1); "
-                        "enable it to include test output as evidence.")
-
-            # 8. model analysis
-            emit("model_analysis", "Thinking through the evidence…")
-            bundle = build_model_context(
-                request_text=request.request_text, error=error, files=files,
-                diagnostics=diagnostics, local_summary=ctx.summary() + "\n" + screenshot_note,
-                budget_chars=self.config.max_context_chars)
-            if intelligence:
-                bundle = (bundle + "\n\n---\n\n" + intelligence)[:self.config.max_context_chars]
-            if test_note:
-                bundle = (bundle + "\n\n---\n\n" + test_note)[:self.config.max_context_chars]
-            if is_explain:
-                user_prompt = (bundle + "\n\n---\n\nExplain the code above and return ONLY the JSON report. "
-                               "Describe what the code does, how it works, and any "
-                               "notable behavior or potential issues. Do not invent "
-                               "file paths or line numbers.")
-                system_prompt = EXPLAIN_SYSTEM_PROMPT
-            else:
-                user_prompt = (bundle + "\n\n---\n\nAnalyze the evidence above and return ONLY the JSON report. "
-                               "Do not invent file paths or line numbers. "
-                               "Propose a minimal unified diff that applies cleanly.")
-                system_prompt = SYSTEM_PROMPT
-            messages = [{"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}]
-            if screenshot_b64 and shot is not None:
-                # Ollama vision: attach image to the user message when supported.
-                messages[-1] = {"role": "user", "content": user_prompt,
-                                "images": [screenshot_b64]}
             try:
-                raw = self.ollama.chat(messages, stream=False,
-                                       cancel_event=cancel_event,
-                                       timeout=self.config.read_timeout_s)
-            except OllamaCancelledError as e:
-                raise InvestigationCancelled(str(e)) from e
-            except OllamaError as e:
-                hint = getattr(e, "hint", "")
-                return InvestigationReport(
-                    investigation_id=inv_id,
-                    summary="Model analysis unavailable.",
-                    root_cause=str(e), confidence="low",
-                    confidence_rationale="No model verdict; evidence collected but not analyzed.",
-                    needs_more_info=[hint] if hint else [],
-                    evidence_summary=(f"{screenshot_note}\n{ctx.summary()}\n"
-                                      f"Files read: {len(files)}. " + "; ".join(read_notes)[:2000]),
-                    warnings=[f"Ollama error: {e}"])
-
-            # 9. validate
-            _check_cancelled(cancel_event)
-            emit("validate", "Validating file paths and line numbers…")
-            report = self._parse_report(inv_id, raw)
-            # Enrich findings with verified excerpts dir context = root.
-            report = sanitize_report(root, report)
-            # Add grounded git "last changed" context to verified findings.
-            _enrich_git_context(root, report)
-            # 9b. auto-fix: go straight to the file and fix the bug when asked.
-            if request.auto_fix:
-                emit("validate", "Applying the verified fix…")
-                report = _maybe_auto_fix(root, report, True,
-                                         self.config.allow_file_edits)
-
-            # 10. report
-            emit("report", "Investigation complete.")
-            if not report.evidence_summary:
-                report.evidence_summary = (
-                    f"{screenshot_note}\n{ctx.summary()}\n"
-                    f"Project root: {root}\nFiles read: {len(files)}")
-            if needs_more:
-                report.needs_more_info = [*report.needs_more_info, *needs_more]
-            if len(files) == 0:
-                report.warnings.append(
-                    "Screenshot/visual evidence alone is insufficient; no code excerpts "
-                    "were available for verification.")
-            return report
-        finally:
-            if shot is not None:
-                dispose(shot)
+                _GRAPH.run(state, start="receive", cancel=cancel_event)
+            finally:
+                if state.shot is not None:
+                    dispose(state.shot)
+            if state.report is not None:
+                return state.report
+            # Defensive: the graph exhausted routing without a verdict.
+            return InvestigationReport(
+                investigation_id=inv_id,
+                summary="Investigation ended without a verdict.",
+                root_cause="Unknown.", confidence="low",
+                warnings=["The agent graph ended without a report."])
+        except InvestigationCancelled:
+            raise
 
     def follow_up(self, request: InvestigationRequest,
                   prior_report: InvestigationReport | dict | None,
@@ -867,6 +1165,7 @@ class InvestigationEngine:
         seen: set[Path] = set()
         if root is not None:
             say("read_files", "Re-reading the files cited by the prior report…")
+            cited: list[dict] = []
             for f in (prior.get("findings") or [])[:6]:
                 _check_cancelled(cancel_event)
                 if not isinstance(f, dict):
@@ -874,8 +1173,14 @@ class InvestigationEngine:
                 rel = str(f.get("file_path", "")).strip()
                 if not rel:
                     continue
-                content, note = safe_read(root, rel,
-                                          max_bytes=self.config.max_file_bytes)
+                cited.append(f)
+            # The re-reads are independent local reads: one parallel batch,
+            # results in findings order, same honest notes when unreadable.
+            contents = _parallel_reads(
+                root, [str(f.get("file_path", "")).strip() for f in cited],
+                self.config.max_file_bytes, cancel_event)
+            for f, (content, note) in zip(cited, contents):
+                rel = str(f.get("file_path", "")).strip()
                 if content is None:
                     read_notes.append(f"{rel} — {note}")
                     continue

@@ -16,10 +16,12 @@ except the composition roots, which only wire startup (never business logic).
                            ▼
 ┌─────────────────────────────────────────────────────────┐
 │ 2. Investigation orchestrator · trace_backend/          │
-│    Screenshot · Project context · Logs · Diagnostics    │
-│    investigation_engine.py drives: screenshot_service,  │
-│    context_collector, project_inspector (+ server.py    │
-│    hosts it over loopback HTTP; electron/src/main/     │
+│    The pipeline runs as an explicit agent graph         │
+│    (agent_graph.py runtime; see "Agent graph" below).   │
+│    investigation_engine.py defines the nodes;           │
+│    screenshot_service, context_collector,               │
+│    project_inspector are the collectors (+ server.py    │
+│    hosts it over loopback HTTP; electron/src/main/      │
 │    traceApi.ts is the UI's transport to that HTTP API)  │
 └──────────────────────────┬──────────────────────────────┘
                            │ redacted evidence bundle only
@@ -47,6 +49,52 @@ except the composition roots, which only wire startup (never business logic).
 │    apply-fix, follow-up, history).                      │
 └─────────────────────────────────────────────────────────┘
 ```
+
+## Agent graph (trace_backend/agent_graph.py + engine nodes)
+
+The 10-stage pipeline is declared as a graph of named nodes over a shared
+typed state (`AgentState`) — the same shape LangGraph made mainstream
+(nodes, conditional edges, parallel fan-out/fan-in, bounded repair loops),
+but as a ~200-line stdlib-only runtime instead of a framework dependency.
+The choice is enforced by `tests/test_layering.py`: `trace_backend/**` may
+not import third-party code, and pulling a log-structured state-machine
+framework into a loopback-only, PyInstaller-bundled tool would be pure
+bloat. What we keep is the discipline:
+
+- **Named nodes over shared state** — each stage is a small function that
+  reads state, does one bounded job, and routes to the next node by name.
+- **Conditional routes** — invalid request → honest abort; explain mode →
+  skip `error_extract` and test execution; malformed model JSON → one
+  bounded `repair` loop; verified diff + auto_fix → `apply_fix`.
+- **Parallel fan-out/fan-in** — `screenshot ∥ context` and
+  `diagnostics ∥ tests ∥ code intelligence` run as
+  `Graph.add_parallel(...)`: bounded pool, per-branch fault isolation, a
+  sequential fallback if threads are unavailable.
+- **Cycle guard + visited trace** — `GraphRun.summary()` (the node path
+  taken) lands in `report.evidence_summary`, so the UI and the journal can
+  show how a verdict was produced.
+
+```
+receive → capture_start ─┬─ screenshot ∥ capture ─┬→ project_root
+                         └────── (bounded pool) ──┘     │
+                                                        │ root? ──✗→ honest abort
+                                                        ▼
+                extract (skip ⟵ explain) ──▶ read (parallel batches)
+                                                        ▼
+collect ─┬─ diagnostics ∥ (opt-in) tests ∥ intelligence ─┬→ analyze → validate
+         └────────────────── (bounded pool) ────────────┘     │       │
+                                                 malformed JSON ─▶ repair ─▶ validate (once)
+                                                        │       │
+                                        verified + auto_fix ─▶ apply_fix
+                                                        ▼
+                                                      report
+```
+
+The model-driven `repair` node is the only edge into the model beyond
+`analyze` — one bounded re-ask with a JSON-only prompt. Every other node's
+work is deterministic, disk-bounded, and produces stage events the UI
+already knows by name; parallelism changes speed, never the verification
+rules.
 
 ## Dependency rules (enforced by tests/test_layering.py)
 
