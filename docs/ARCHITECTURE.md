@@ -103,8 +103,8 @@ rules.
 | Backend never imports UI | `trace_backend/*` has no `trace_ui`/tkinter dependency (except stdlib `tkinter` as a clipboard reader inside `context_collector`, which imports no Trace UI code) |
 | L3 standalone | `ollama_client` ← only `config`; no evidence, validator, engine, or UI imports |
 | L4 downstream-only | `validator` ← only `project_inspector` + `schemas`; never calls model/orchestrator |
-| L2 orchestrates, doesn't host | `investigation_engine` never imports `server`; `server` hosts the engine and never touches evidence/model modules directly (fix + tools stay behind `engine.apply_fix`) |
-| Code intelligence is grounded | `code_tools` ← only `project_inspector`; search/outline/tests never execute project scripts (tests run only the allowlisted runner, opt-in) |
+| L2 orchestrates, doesn't host | `investigation_engine` never imports `server`; `server` hosts the engine and never touches evidence/model modules directly (fix + tools stay behind `engine.apply_fix`). The engine routes work through the stdlib-only graph runtime in `agent_graph` (nodes/edges/fan-out) |
+| Code intelligence is grounded | `code_tools` ← only `project_inspector`; search/regex/outline/symbols/recency/tree/config-checks/annotations/tests never execute project scripts (tests run only the allowlisted runner, opt-in) |
 | Safe fixer is grounded | `code_fixer` ← only `project_inspector` + `validator`; only verified hunks are written, always with `*.trace-bak` backups |
 | Transport is dumb | `traceApi.ts` is fetch-only HTTP (start/stream/cancel/open-file/apply-fix); renderer files are import-free plain scripts behind the preload bridge |
 | L1 Face craft, Trace console | face renderer keeps Neo's spring/eye primitives (verbatim fidelity); the console chrome is Trace's own — composer, progress rail, verdict — no backend URLs, no model access, no Neoma (enforced by `tests/test_frontend_guards.py`) |
