@@ -334,17 +334,21 @@ def _run(cmd: list[str], cwd: Path, timeout_s: float) -> str:
 
 def collect_diagnostics(root: Path, target_files: list[Path],
                         timeout_s: float = 30.0) -> list[DiagnosticResult]:
-    """Run whichever of the allowlisted tools are installed. Never runs project code."""
-    results: list[DiagnosticResult] = []
+    """Run whichever allowlisted tools are installed, concurrently.
+
+    Each tool is an independent, already-installed CLI subprocess: they are
+    collected first (still allowlisted, still no project-code execution),
+    then started together on a small bounded pool so a slow linter cannot
+    serialize the whole diagnostics stage. Results keep the same order as a
+    sequential run, and per-tool failures degrade to a skipped note, never
+    an exception into the pipeline.
+    """
     suffixes = {p.suffix.lower() for p in target_files}
 
     def have(tool: str) -> bool:
         return shutil.which(tool) is not None
 
-    def add(tool: str, cmd: list[str]):
-        out = _run(cmd, root, timeout_s)
-        results.append(DiagnosticResult(tool=tool, ok=True, output=out))
-
+    jobs: list[tuple[str, list[str]]] = []
     # Python: compile-check target files only (no execution).
     if ".py" in suffixes and have("python"):
         for p in target_files[:5]:
@@ -353,25 +357,42 @@ def collect_diagnostics(root: Path, target_files: list[Path],
                     rel = p.relative_to(root)
                 except ValueError:
                     continue
-                add(f"py_compile:{rel}", ["python", "-m", "py_compile", str(rel)])
+                jobs.append((f"py_compile:{rel}",
+                             ["python", "-m", "py_compile", str(rel)]))
     if have("ruff"):
-        add("ruff", ["ruff", "check", "."])
+        jobs.append(("ruff", ["ruff", "check", "."]))
     if have("mypy") and ".py" in suffixes:
-        add("mypy", ["mypy", "."])
+        jobs.append(("mypy", ["mypy", "."]))
     if have("tsc") and suffixes & {".ts", ".tsx", ".js", ".jsx"}:
-        add("tsc", ["tsc", "--noEmit"])
+        jobs.append(("tsc", ["tsc", "--noEmit"]))
     if have("eslint") and suffixes & {".ts", ".tsx", ".js", ".jsx"}:
-        add("eslint", ["eslint", "."])
+        jobs.append(("eslint", ["eslint", "."]))
     if (root / "Cargo.toml").exists() and have("cargo"):
-        add("cargo-check", ["cargo", "check", "--message-format=short"])
+        jobs.append(("cargo-check", ["cargo", "check", "--message-format=short"]))
     if (root / "go.mod").exists() and have("go"):
-        add("go-vet", ["go", "vet", "./..."])
+        jobs.append(("go-vet", ["go", "vet", "./..."]))
     if any(root.glob(f) for f in ("*.sln", "*.csproj")) and have("dotnet"):
-        add("dotnet-build", ["dotnet", "build", "--nologo", "-v", "q"])
-    if not results:
-        results.append(DiagnosticResult(
+        jobs.append(("dotnet-build", ["dotnet", "build", "--nologo", "-v", "q"]))
+    if not jobs:
+        return [DiagnosticResult(
             tool="none", ok=True, output="",
-            skipped_reason="No supported linter/compiler found on PATH; skipped diagnostics."))
+            skipped_reason="No supported linter/compiler found on PATH; skipped diagnostics.")]
+
+    def _guarded(job: tuple[str, list[str]]) -> DiagnosticResult:
+        tool, cmd = job
+        try:
+            return DiagnosticResult(tool=tool, ok=True, output=_run(cmd, root, timeout_s))
+        except Exception as e:  # never let one tool break the batch
+            return DiagnosticResult(tool=tool, ok=False, output="",
+                                    skipped_reason=f"failed: {e}")
+
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(4, len(jobs)),
+                                thread_name_prefix="trace-diag") as ex:
+            results = list(ex.map(_guarded, jobs))
+    except Exception:
+        results = [_guarded(job) for job in jobs]
     return results
 
 
