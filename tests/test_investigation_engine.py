@@ -214,6 +214,8 @@ class TestEngine(unittest.TestCase):
         with mock.patch.object(eng_mod, "collect_diagnostics", return_value=[]):
             report = engine.investigate(req)
         self.assertIn("trace-investigation", report.evidence_summary)
+        # Per-branch parallel timings are part of the transparent verdict.
+        self.assertIn("Timing: capture:", report.evidence_summary)
 
 
 class TestGraphBehaviors(unittest.TestCase):
@@ -434,6 +436,83 @@ class TestInspectorSafety(unittest.TestCase):
         out = redact_secrets("API_KEY = 'sk-abcdef1234567890' and password: hunter2")
         self.assertNotIn("sk-abcdef1234567890", out)
         self.assertIn("REDACTED", out)
+
+
+class _StreamingOllama:
+    """Stub that feeds ``on_token`` chunks then returns a full reply."""
+
+    def __init__(self, response: str = GOOD_JSON, chunk_size: int = 500,
+                 chunks: int = 8):
+        self.response = response
+        self.chunk_size = chunk_size
+        self.chunks = chunks
+        self.calls = 0
+
+    def chat(self, messages, **kwargs):
+        self.calls += 1
+        on_token = kwargs.get("on_token")
+        data = "Y" * self.chunk_size
+        if callable(on_token):
+            for _ in range(self.chunks):
+                on_token(data)
+        return self.response
+
+
+class TestStreamingReasoning(unittest.TestCase):
+    """The silent 'Thinking…' gap is filled with throttled reasoning ticks."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "pyproject.toml").write_text("[project]\nname='x'\n")
+        (self.root / "app.py").write_text("def boom(x):\n    return x.strip()\n")
+
+    def _run(self, chunks: int):
+        recorder: list[tuple[str, str]] = []
+
+        def record(ev):
+            recorder.append((ev.stage, ev.message))
+
+        ollama = _StreamingOllama(chunks=chunks)
+        engine = InvestigationEngine(_cfg(), ollama=ollama)
+        req = InvestigationRequest(
+            request_text="AttributeError in app.py",
+            project_dir=str(self.root), include_screenshot=False)
+        with mock.patch.object(eng_mod, "collect_diagnostics", return_value=[]):
+            report = engine.investigate(req, progress_cb=record)
+        return report, recorder
+
+    def test_reasoning_ticks_reach_progress_events(self):
+        report, recorder = self._run(chunks=8)
+        self.assertIsInstance(report, InvestigationReport)
+        ticks = [m for stage, m in recorder if stage == "model_analysis"
+                 and m.startswith("thinking ▸ …")]
+        self.assertGreaterEqual(len(ticks), 2)
+        self.assertTrue(all("\n" not in t for t in ticks))
+
+    def test_reasoning_ticks_are_capped_per_call(self):
+        _, recorder = self._run(chunks=100)  # 100 × 500 chars ≫ the cap
+        ticks = [m for stage, m in recorder if m.startswith("thinking ▸ …")]
+        self.assertEqual(len(ticks), eng_mod._STREAM_TICK_MAX)
+
+    def test_thinker_tail_collapses_whitespace(self):
+        emit: list[tuple[str, str]] = []
+        cb = eng_mod._stream_thinker(lambda s, m: emit.append((s, m)))
+        cb("line1\n\n  line2   ")
+        self.assertEqual(emit, [])
+        cb("x" * 600)
+        self.assertEqual(emit[0][0], "model_analysis")
+        self.assertNotIn("\n", emit[0][1])
+        self.assertTrue(emit[0][1].endswith("x" * 10))
+
+    def test_emit_failure_never_breaks_the_stream(self):
+        def broken(stage, message):
+            raise RuntimeError("ui blew up")
+
+        cb = eng_mod._stream_thinker(broken)
+        cb("y" * 1000)  # must not raise
+        cb("y" * 1000)  # a capped, still-nonraising second pass
 
 
 if __name__ == "__main__":

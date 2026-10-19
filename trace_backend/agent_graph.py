@@ -166,8 +166,6 @@ class GraphRun:
         path = " → ".join(self.visited) or "(empty)"
         extra = f", {self.parallel_fanouts} parallel fan-out(s)" \
             if self.parallel_fanouts else ""
-        if self.parallel_timings:
-            extra += f" | {self.timings_text()}"
         if self.steps_hit_limit:
             extra += " (cycle guard tripped)"
         return f"{self.name}: {path}{extra}"
@@ -220,39 +218,55 @@ class Graph:
         ``branches`` map a result key to a callable ``(state) -> value``.
         On a worker error the branch yields ``None`` (fault-isolated) —
         except for ``cancel_exc_type``, which is re-raised so cancellation
-        stays prompt. ``merge(state, results)`` runs serially on the caller
-        thread and returns the next node name. If threads are unavailable
-        (or there is a single branch), branches run sequentially: identical
-        results, just slower.
+        stays prompt. ``merge(state, results, timings)`` runs serially on
+        the caller thread and returns the next node name; ``timings`` maps
+        each branch key to its seconds. Timings are also recorded on the
+        run trace (``state.run_trace.parallel_timings``), so reports can
+        show where the wall-clock went. If threads are unavailable (or
+        there is a single branch), branches run sequentially: identical
+        results and timings, just less speed.
         """
         if not branches:
+            self._kinds[name] = "parallel[]"
             def empty(state):
-                return merge(state, {})
+                return merge(state, {}, {})
             self._nodes[name] = empty
             return self
+        self._kinds[name] = f"parallel[{', '.join(branches)}]"
 
         def run_node(state):
             cancel = getattr(state, "cancel", None)
             self._check_cancelled(cancel)
             keyed = list(branches.items())
             results: dict[str, Any] = {}
+            timings: dict[str, float] = {}
             run_trace: GraphRun | None = getattr(state, "run_trace", None)
+
+            def _timed(key, fn):
+                t0 = time.perf_counter()
+                try:
+                    return fn(state)
+                finally:
+                    timings[key] = time.perf_counter() - t0
 
             if len(keyed) == 1:
                 self._check_cancelled(cancel)
+                key, fn = keyed[0]
                 try:
-                    results[keyed[0][0]] = keyed[0][1](state)
+                    results[key] = _timed(key, fn)
                 except BaseException as e:  # noqa: BLE001 - isolated on purpose
                     if self._is_cancel(e):
                         raise
-                    results[keyed[0][0]] = None
-                return merge(state, results)
+                    results[key] = None
+                if run_trace is not None:
+                    run_trace.parallel_timings[name] = dict(timings)
+                return merge(state, results, timings)
 
             try:
                 with ThreadPoolExecutor(
                         max_workers=max(2, min(max_workers, len(keyed))),
                         thread_name_prefix=f"graph-{name}") as ex:
-                    for key, _fn, fut in [(k, fn, ex.submit(fn, state))
+                    for key, _fn, fut in [(k, fn, ex.submit(_timed, k, fn))
                                           for k, fn in keyed]:
                         self._check_cancelled(cancel)
                         try:
@@ -263,6 +277,7 @@ class Graph:
                             results[key] = None
                     if run_trace is not None:
                         run_trace.parallel_fanouts += 1
+                        run_trace.parallel_timings[name] = dict(timings)
             except BaseException as e:  # noqa: BLE001
                 if self._is_cancel(e):
                     raise
@@ -272,15 +287,27 @@ class Graph:
                     for key, fn in keyed:
                         self._check_cancelled(cancel)
                         try:
-                            results[key] = fn(state)
+                            results[key] = _timed(key, fn)
                         except BaseException as be:  # noqa: BLE001
                             if self._is_cancel(be):
                                 raise
                             results[key] = None
-            return merge(state, results)
+                    if run_trace is not None:
+                        run_trace.parallel_timings[name] = dict(timings)
+            return merge(state, results, timings)
 
         self._nodes[name] = run_node
         return self
+
+    def describe(self) -> str:
+        """Human-readable plan: every node and its kind, no source needed."""
+        head = f"{self.name}: {len(self._nodes)} nodes"
+        if self._cancel_exc_type is not None:
+            head += f" (cancel = {self._cancel_exc_type.__name__})"
+        lines = [head]
+        for node_name in self._nodes:
+            lines.append(f"  {node_name:<14} {self._kinds.get(node_name, 'node')}")
+        return "\n".join(lines)
 
     def _is_cancel(self, exc: BaseException) -> bool:
         return (self._cancel_exc_type is not None

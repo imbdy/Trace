@@ -736,7 +736,8 @@ def _capture_context_branch(state: AgentState) -> tuple:
         return ("failed", LocalContext())
 
 
-def _capture_merge(state: AgentState, results: dict) -> str:
+def _capture_merge(state: AgentState, results: dict,
+                   timings: dict | None = None) -> str:
     """Join the screenshot ∥ context fan-out; emit notes in canonical order."""
     kind, payload = results.get("screenshot") or ("failed", None)
     if kind == "ok":
@@ -856,7 +857,8 @@ def _branch_intelligence(state: AgentState) -> str:
         return ""
 
 
-def _collect_merge(state: AgentState, results: dict) -> str:
+def _collect_merge(state: AgentState, results: dict,
+                   timings: dict | None = None) -> str:
     """Join diagnostics ∥ tests ∥ intelligence; keep the original evidence
     order and the original opt-in honest notes."""
     _check_cancelled(state.cancel)
@@ -894,6 +896,46 @@ def _collect_merge(state: AgentState, results: dict) -> str:
     return "analyze"
 
 
+# Live reasoning ticks: throttled so the SSE stream and UI logs see
+# meaningful chunks of the model's thinking instead of every token. Three
+# bounds: emit at most every this-many accumulated characters ...
+_STREAM_TICK_CHARS = 480
+# ... at most this-many ticks per model call ...
+_STREAM_TICK_MAX = 24
+# ... and each tick shows only this many newest characters (the tail).
+_STREAM_TICK_TAIL = 90
+
+
+def _stream_thinker(emit: Callable[[str, str], None]) -> Callable[[str], None]:
+    """Return an ``on_token`` callback that emits throttled reasoning ticks.
+
+    Every ``_STREAM_TICK_CHARS`` accumulated characters (up to
+    ``_STREAM_TICK_MAX`` ticks) one ``model_analysis`` event carries the
+    newest ``_STREAM_TICK_TAIL`` characters of the model's output — the
+    user sees the reasoning breathe instead of a silent gap. Emission
+    failures must never break the stream, so the callback itself never
+    raises.
+    """
+    buf: list[str] = []
+    chars = 0
+    left = _STREAM_TICK_MAX
+
+    def on_token(delta: str) -> None:
+        nonlocal chars, left
+        buf.append(delta)
+        chars += len(delta)
+        if left > 0 and chars >= _STREAM_TICK_CHARS:
+            left -= 1
+            chars = 0
+            tail = " ".join("".join(buf)[-_STREAM_TICK_TAIL:].split())
+            if tail:
+                try:
+                    emit("model_analysis", f"thinking ▸ …{tail}")
+                except Exception:
+                    pass
+    return on_token
+
+
 def _node_analyze(state: AgentState) -> str:
     """Assemble the evidence bundle and ask the model for a structured verdict."""
     state.emit("model_analysis", "Thinking through the evidence…")
@@ -927,7 +969,12 @@ def _node_analyze(state: AgentState) -> str:
         messages[-1] = {"role": "user", "content": user_prompt,
                         "images": [state.screenshot_b64]}
     try:
-        state.raw = state.ollama.chat(messages, stream=False,
+        # Streaming with throttled reasoning ticks — the SSE stage events
+        # make the previously silent "Thinking…" phase observable. The
+        # returned value is still the full assistant text, so parsing and
+        # verification below are unchanged.
+        state.raw = state.ollama.chat(messages, stream=True,
+                                      on_token=_stream_thinker(state.emit),
                                       cancel_event=state.cancel,
                                       timeout=state.config.read_timeout_s)
     except OllamaCancelledError as e:
@@ -980,7 +1027,8 @@ def _node_repair(state: AgentState) -> str:
                  "Rebuild your full report as ONLY valid JSON. "
                  "Your previous (invalid) reply, for reference:\n\n"
                  f"{state.raw[:4000]}")}],
-            stream=False, cancel_event=state.cancel,
+            stream=True, on_token=_stream_thinker(state.emit),
+            cancel_event=state.cancel,
             timeout=state.config.read_timeout_s)
     except OllamaCancelledError as e:
         raise InvestigationCancelled(str(e)) from e
@@ -1022,6 +1070,10 @@ def _node_report(state: AgentState) -> str:
     if state.run_trace is not None and hasattr(state.run_trace, "summary"):
         report.evidence_summary = (
             report.evidence_summary + "\n" + state.run_trace.summary())[:4000]
+        timings_text = state.run_trace.timings_text()
+        if timings_text:
+            report.evidence_summary = (
+                report.evidence_summary + f"\nTiming: {timings_text}")[:4000]
     return END
 
 
@@ -1221,7 +1273,8 @@ class InvestigationEngine:
             raw = self.ollama.chat(
                 [{"role": "system", "content": FOLLOW_UP_SYSTEM_PROMPT},
                  {"role": "user", "content": user_prompt}],
-                stream=False, cancel_event=cancel_event,
+                stream=True, on_token=_stream_thinker(say),
+                cancel_event=cancel_event,
                 timeout=self.config.read_timeout_s)
         except OllamaCancelledError as e:
             raise InvestigationCancelled(str(e)) from e

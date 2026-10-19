@@ -117,9 +117,14 @@ buried in nested ifs:
 - **Malformed model JSON gets one bounded repair.** If the verdict isn't
   valid JSON, Trace re-asks once with a JSON-only prompt. Still broken? An
   honest low-confidence report; never a fabricated one.
+- **The reasoning phase is visible.** The model streams its analysis; the
+  backend emits throttled "thinking ▸ …" stage events (whitespace-collapsed
+  tails of the newest output, capped per call), so the once-silent
+  `model_analysis` gap shows live reasoning in the character's status and
+  the activity log. Parsing/verification semantics are unchanged.
 - **The graph path is in the evidence.** `Evidence` shows which nodes the
-  run actually visited (`receive → capture ∥ → … → report`), so a verdict
-  is inspectable end-to-end.
+  run actually visited (`receive → capture ∥ → … → report`), plus
+  per-branch parallel timings, so a verdict is inspectable end-to-end.
 - **`error_extract` is skipped in Explain mode**, and stack-frame files are
   not pre-loaded — you are not debugging, you are asking what something does.
 - **`validate` is the important one.** It is what opens each cited path on disk.
