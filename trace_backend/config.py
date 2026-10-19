@@ -12,12 +12,58 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 
 DEFAULT_MODEL = "gemma4:31b-cloud"
 DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434"
 DEFAULT_BIND_HOST = "127.0.0.1"
 DEFAULT_BIND_PORT = 3777
+# The agent-graph cycle guard: max node steps per investigation. The happy
+# path takes ~13; raising the bound only matters if the graph grows.
+DEFAULT_MAX_ITERATIONS = 64
+
+# .env files already loaded this process (from_env can be called more than
+# once); each candidate file is read at most once per process.
+_ENV_FILES_LOADED: set[str] = set()
+
+
+def _load_env_file(path: Path) -> None:
+    """Minimal stdlib KEY=VALUE loader — no third-party dotenv.
+
+    Existing process environment always wins (standard .env behavior),
+    values are trimmed and unquoted, and file errors are ignored silently:
+    missing/unreadable .env simply means defaults.
+    """
+    key = str(path)
+    if key in _ENV_FILES_LOADED:
+        return
+    _ENV_FILES_LOADED.add(key)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        name = name.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if name and name not in os.environ:
+            os.environ[name] = value
+
+
+def _candidate_env_files() -> list[Path]:
+    """Where a .env is looked for, first match wins: CWD, then repo root."""
+    out: list[Path] = []
+    for cand in (Path.cwd() / ".env",
+                 Path(__file__).resolve().parent.parent / ".env"):
+        if cand not in out:
+            out.append(cand)
+    return out
 
 
 @dataclass(frozen=True)
@@ -51,9 +97,14 @@ class TraceConfig:
     # allowlisted runner from code_tools.detect_test_command is ever executed.
     # Project scripts are never executed.
     allow_test_execution: bool = False
+    # Agent-graph step budget (TRACE_MAX_ITERATIONS): how many node hops one
+    # investigation may take before the cycle guard stops it honestly.
+    max_iterations: int = DEFAULT_MAX_ITERATIONS
 
     @classmethod
     def from_env(cls) -> "TraceConfig":
+        for env_file in _candidate_env_files():
+            _load_env_file(env_file)
         return cls(
             ollama_host=os.environ.get("OLLAMA_HOST", DEFAULT_OLLAMA_HOST).rstrip("/"),
             ollama_model=os.environ.get("TRACE_MODEL", DEFAULT_MODEL),
@@ -72,6 +123,8 @@ class TraceConfig:
             allow_test_execution=os.environ.get(
                 "TRACE_ALLOW_TESTS", "0").strip().lower()
             in ("1", "true", "yes", "on"),
+            max_iterations=int(os.environ.get(
+                "TRACE_MAX_ITERATIONS", str(DEFAULT_MAX_ITERATIONS))),
         )
 
     def validate(self) -> list[str]:
@@ -86,6 +139,11 @@ class TraceConfig:
             problems.append(f"ollama_host must be an http(s) URL, got {self.ollama_host!r}")
         if not self.ollama_model.strip():
             problems.append("ollama_model must not be empty")
+        if not (2 <= self.max_iterations <= 1000):
+            problems.append(
+                f"max_iterations must be between 2 and 1000, got "
+                f"{self.max_iterations!r} (TRACE_MAX_ITERATIONS); the happy "
+                "path needs ~13 steps")
         return problems
 
     def redacted(self) -> dict:
@@ -99,6 +157,7 @@ class TraceConfig:
             "bind_port": self.bind_port,
             "allow_file_edits": self.allow_file_edits,
             "allow_test_execution": self.allow_test_execution,
+            "max_iterations": self.max_iterations,
             "cloud_note": (
                 f"Model {self.ollama_model!r} may process submitted context "
                 "through Ollama's cloud service; it is not local-only."
