@@ -10,6 +10,11 @@ read_files → diagnostics → model_analysis → validate → report.
 - Supports cancellation via threading.Event at every stage + during streaming.
 - Malformed model output degrades to a low-confidence honest report, never
   a fabricated one.
+- Independent collection work runs concurrently on small, bounded thread
+  pools (screenshot ∥ local context; parallel file reads; diagnostics ∥
+  tests ∥ code intelligence; per-finding git enrichment). Every parallel
+  helper degrades to a sequential fallback on failure, and every result is
+  still disk-verified downstream — parallelism changes speed, never rules.
 - ``follow_up`` answers a question about an existing verdict: the prior
   report is the context (re-read from disk where it can be), and the answer
   passes through the same validator as a first-pass report.
@@ -21,15 +26,22 @@ import base64
 import json
 import re
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable
 
 from .code_fixer import apply_unified_diff
 from .code_tools import (
     complexity_snapshot,
+    check_json_config,
     file_outline,
-    find_symbol,
+    find_symbols,
+    parse_test_failures,
+    project_tree,
+    recent_files,
     run_project_tests,
+    scan_annotations,
+    search_many,
 )
 from .config import TraceConfig
 from .context_collector import LocalContext, collect_local_context
@@ -80,9 +92,12 @@ test output) and return ONLY valid JSON with this exact schema:
 "start_line": int, "end_line": int, "explanation": str, "evidence": str}],
  "recommended_fix": {"description": str, "diff": str, "rationale": str},
  "alternative_hypotheses": [str], "needs_more_info": [str], "evidence_summary": str}
-Rules: only cite file paths and line numbers that appear in the provided FILE excerpts or \
-error stack frames. Never invent paths, line numbers, compiler output, or test results. If evidence \
-is insufficient, set confidence to "low", explain what is known vs uncertain, and list the next \
+Rules: only cite file paths and line numbers that appear in the provided FILE excerpts, \
+error stack frames, SEARCH HITS, test failure anchors, or their outlines. The PROJECT TREE / \
+RECENTLY MODIFIED / CONFIG CHECKS sections list what was actually read from disk — cite those \
+paths the same way when the bug involves file naming or configuration. Never invent paths, line \
+numbers, compiler output, or test results. If evidence is insufficient, set confidence to "low", \
+explain what is known vs uncertain, and list the next \
 diagnostic step in needs_more_info. When you propose a fix, return a MINIMAL unified diff \
 ("--- a/path" / "+++ b/path" with @@ hunks) whose context lines match the real file exactly, \
 so it can be applied directly; keep hunks small and scoped to the bug."""
@@ -214,14 +229,63 @@ def _dict_to_fix(fix: dict):
         return _RF(description="", diff=None)
 
 
+def _parallel_reads(root: Path, targets: list,
+                    max_bytes: int, cancel: threading.Event | None
+                    ) -> list[tuple[str | None, str]]:
+    """Many ``safe_read`` calls at once on a small bounded pool, in order.
+
+    Reads are independent local-disk I/O — the single hottest loop in the
+    pipeline — so a batch of frames/candidates goes out concurrently and
+    comes back in submission order. Cancellation is checked before each
+    result impression; a failing worker degrades to a ``(None, note)``
+    instead of breaking the batch; a broken pool falls back to sequential
+    reads. Behaviour is identical to a sequential loop, only faster.
+    """
+    if not targets:
+        return []
+
+    def job(target):
+        return safe_read(root, target, max_bytes=max_bytes)
+
+    if len(targets) == 1:
+        _check_cancelled(cancel)
+        return [job(targets[0])]
+    try:
+        with ThreadPoolExecutor(max_workers=max(2, min(8, len(targets))),
+                                thread_name_prefix="trace-read") as ex:
+            futs = [ex.submit(job, t) for t in targets]
+            out: list[tuple[str | None, str]] = []
+            for fut, _t in zip(futs, targets):
+                _check_cancelled(cancel)
+                try:
+                    out.append(fut.result(timeout=60))
+                except InvestigationCancelled:
+                    raise
+                except Exception:
+                    out.append((None, "read failed"))
+            return out
+    except InvestigationCancelled:
+        raise
+    except Exception:
+        out = []
+        for t in targets:
+            _check_cancelled(cancel)
+            try:
+                out.append(job(t))
+            except Exception:
+                out.append((None, "read failed"))
+        return out
+
+
 def _read_frame_files(root: Path, error: ErrorInfo,
                       seen: set[Path], files: list[tuple[Path, str]],
                       read_notes: list[str], max_bytes: int,
                       cancel: threading.Event | None) -> None:
-    """Read stack-trace frames first (strongest signal). Mutates in place."""
-    for frame in error.frames[:8]:
-        _check_cancelled(cancel)
-        content, note = safe_read(root, frame.file, max_bytes=max_bytes)
+    """Read stack-trace frames first (strongest signal), concurrently."""
+    frames = error.frames[:8]
+    contents = _parallel_reads(root, [frame.file for frame in frames],
+                               max_bytes, cancel)
+    for frame, (content, note) in zip(frames, contents):
         if content is not None:
             p = (root / frame.file).resolve() \
                 if not Path(frame.file).is_absolute() else Path(frame.file)
@@ -233,78 +297,255 @@ def _read_frame_files(root: Path, error: ErrorInfo,
             read_notes.append(f"{frame.file} — {note}")
 
 
+# Bounded job sizes for the candidate-read stage (kept honest, not larger).
+_CANDIDATE_READS = 20
+_MAX_EVIDENCE_FILES = 12
+
+
 def _read_candidate_files(root: Path, query: str,
                           seen: set[Path], files: list[tuple[Path, str]],
                           max_bytes: int,
                           cancel: threading.Event | None) -> None:
-    """Read ranked candidates + one level of imports (bounded)."""
-    for cand in list_candidate_files(root, query):
-        _check_cancelled(cancel)
+    """Ranked candidates read in one parallel batch; imports follow in a
+    second parallel batch for the top hits. Ordering matches a sequential
+    walk (candidates ranked first, then their imports), bounded as before.
+    """
+    candidates = list_candidate_files(root, query)[:_CANDIDATE_READS]
+    ranked: list[tuple[Path, str | Path]] = []
+    for cand in candidates:
         if cand in seen:
             continue
         try:
             rel = cand.relative_to(root)
         except ValueError:
             continue
-        content, _note = safe_read(root, rel, max_bytes=max_bytes)
-        if content is not None:
-            files.append((cand, content[:12000]))
-            seen.add(cand)
-            if len(files) <= 3:  # follow imports for the top hits only
-                for related in follow_imports(cand, root):
-                    if related in seen or len(files) >= 12:
-                        break
-                    if related.is_absolute():
-                        target: str | Path = related
-                    else:
-                        target = related.relative_to(root) \
-                            if _is_within(related, root) else related
-                    extra, _ = safe_read(root, target, max_bytes=max_bytes)
-                    if extra is not None:
-                        files.append((related, extra[:12000]))
-                        seen.add(related)
-        if len(files) >= 12:
+        ranked.append((cand, rel))
+    contents = _parallel_reads(root, [rel for _c, rel in ranked],
+                               max_bytes, cancel)
+    produced: list[Path] = []  # candidates that yielded content, in rank order
+    for (cand, _rel), (content, _note) in zip(ranked, contents):
+        if len(files) >= _MAX_EVIDENCE_FILES:
             break
+        if content is None or cand in seen:
+            continue
+        files.append((cand, content[:12000]))
+        seen.add(cand)
+        produced.append(cand)
 
-
-def _code_intelligence_section(root: Path, error: ErrorInfo,
-                               files: list[tuple[Path, str]]) -> str:
-    """Bounded symbol/outline evidence so the model cites real definitions."""
-    parts: list[str] = []
-    try:
-        keywords = [w for w in
-                    re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}",
-                               error.message or "")][:5]
-        for kw in keywords[:3]:
-            for hit in find_symbol(root, kw, limit=3):
-                parts.append(f"symbol {kw}: {hit.path}:{hit.line}: {hit.snippet}")
-                if len("\n".join(parts)) > 2000:
-                    break
-    except Exception:
-        pass
-    try:
-        for path, content in files[:4]:
-            try:
-                outline = file_outline(path)[:12]
-            except Exception:
+    # Follow imports of the top producing candidates (parallel second batch).
+    import_jobs: list[tuple[Path, str | Path]] = []
+    for cand in produced[:3]:
+        for related in follow_imports(cand, root):
+            if related in seen:
                 continue
-            if outline:
-                desc = ", ".join(f"{e.kind} {e.name}@{e.line}" for e in outline)
-                try:
-                    rel = path.relative_to(root)
-                except ValueError:
-                    rel = path
-                parts.append(f"outline {rel}: {desc}")
-                snap = complexity_snapshot(path, content)
-                if snap.get("notes"):
-                    parts.append(f"notes {rel}: {'; '.join(snap['notes'])}")
-            if len("\n".join(parts)) > 3000:
+            if any(rel is related for rel, _t in import_jobs):
+                continue
+            if related.is_absolute():
+                target: str | Path = related
+            else:
+                target = related.relative_to(root) \
+                    if _is_within(related, root) else related
+            import_jobs.append((related, target))
+            if len(import_jobs) >= _MAX_EVIDENCE_FILES:
                 break
+        if len(import_jobs) >= _MAX_EVIDENCE_FILES:
+            break
+    if import_jobs:
+        extras = _parallel_reads(root, [t for _r, t in import_jobs],
+                                 max_bytes, cancel)
+        for (related, _t), (extra, _n) in zip(import_jobs, extras):
+            if len(files) >= _MAX_EVIDENCE_FILES:
+                break
+            if extra is None or related in seen:
+                continue
+            files.append((related, extra[:12000]))
+            seen.add(related)
+
+
+def _evidence_keywords(request_text: str, error: ErrorInfo) -> list[str]:
+    """Identifier-ish tokens that are actually worth a project search."""
+    seen: set[str] = set()
+    words = re.findall(r"[A-Za-z_][A-Za-z0-9_]{2,}",
+                       " ".join([request_text or "", error.message or ""]))
+    stop = {"error", "exception", "traceback", "failed", "failure", "unknown"}
+    out: list[str] = []
+    for w in words:
+        lw = w.lower()
+        if lw in stop or lw in seen:
+            continue
+        seen.add(lw)
+        out.append(lw)
+        if len(out) >= 6:
+            break
+    if error.message:  # error-message tokens outrank prose
+        err_words = {w.lower() for w in re.findall(
+            r"[A-Za-z_][A-Za-z0-9_]{2,}", error.message)}
+        ranked = sorted(out, key=lambda w: w not in err_words)
+        out = ranked[:6]
+    return out
+
+
+def _gather_outlines(files: list[tuple[Path, str]], max_files: int = 8
+                     ) -> list[tuple[Path, str, list, dict]]:
+    """Outlines + complexity for several read files, concurrently."""
+
+    def one(item):
+        path, content = item
+        try:
+            outline = file_outline(path)[:12]
+        except Exception:
+            outline = []
+        try:
+            snap = complexity_snapshot(path, content)
+        except Exception:
+            snap = {}
+        return path, content, outline, snap
+
+    return [_r for _r in _parallel_map(one, files[:max_files]) if _r]
+
+
+def _parallel_map(fn, items: list):
+    """Order-preserving bounded map; a failing item yields None. Never raises."""
+    if not items:
+        return []
+    if len(items) == 1:
+        try:
+            return [fn(items[0])]
+        except Exception:
+            return [None]
+    try:
+        with ThreadPoolExecutor(max_workers=max(2, min(8, len(items))),
+                                thread_name_prefix="trace-engine") as ex:
+            return list(ex.map(lambda it: _guarded_call(fn, it), items))
+    except Exception:
+        return [_try(fn, it) for it in items]
+
+
+def _guarded_call(fn, item):
+    try:
+        return fn(item)
+    except Exception:
+        return None
+
+
+def _try(fn, item):
+    try:
+        return fn(item)
+    except Exception:
+        return None
+
+
+def _gather_intelligence(root: Path, request_text: str, error: ErrorInfo,
+                         files: list[tuple[Path, str]]) -> str:
+    """Bounded, disk-grounded supplementary evidence, collected concurrently.
+
+    Sections — all capped and all real reads of this project:
+      SEARCH HITS       keyword anchors across the whole tree (parallel).
+      SYMBOLS           where error-token symbols are defined (parallel).
+      outline/notes     one line per read file: shape + complexity notes.
+      CONFIG CHECKS     top-level *.json syntax verdicts.
+      ANNOTATIONS       TODO/FIXME anchors from the files already read.
+      PROJECT TREE + RECENTLY MODIFIED — only when nothing could be read,
+                        so the model can orient on honest disk truth
+                        instead of inventing paths.
+    """
+    sections: list[str] = []
+
+    # 1. Parallel whole-tree searches for the sharpest keywords.
+    kws = _evidence_keywords(request_text, error)
+    if kws:
+        try:
+            hits_by_kw = search_many(root, kws[:3], max_hits_each=6)
+            lines = []
+            for kw, hits in hits_by_kw.items():
+                for h in hits:
+                    lines.append(f"hit [{kw}] {h.path}:{h.line}: {h.snippet}")
+            if lines:
+                sections.append("SEARCH HITS:\n" + "\n".join(lines)[:2500])
+        except Exception:
+            pass
+
+    # 2. Symbol definitions for error tokens (concurrent).
+    try:
+        err_kws = [w for w in re.findall(
+            r"[A-Za-z_][A-Za-z0-9_]{2,}", error.message or "")][:3]
+        if err_kws:
+            defs = find_symbols(root, err_kws, limit=3)
+            lines = []
+            for sym, hits in defs.items():
+                for hit in hits:
+                    lines.append(f"symbol {sym}: {hit.path}:{hit.line}: "
+                                 f"{hit.snippet}")
+            if lines and sum(len(x) for x in lines) < 2200:
+                sections.append("SYMBOLS:\n" + "\n".join(lines))
     except Exception:
         pass
-    if not parts:
+
+    # 3. Outlines + complexity notes for the files we actually read.
+    try:
+        for path, content, outline, snap in _gather_outlines(files):
+            if not outline and not snap.get("notes"):
+                continue
+            try:
+                rel = path.relative_to(root)
+            except ValueError:
+                rel = path
+            if outline:
+                desc = ", ".join(f"{e.kind} {e.name}@{e.line}"
+                                 for e in outline)
+                sections.append(f"outline {rel}: {desc}")
+            notes = snap.get("notes") if isinstance(snap, dict) else None
+            if notes:
+                sections.append(f"notes {rel}: {'; '.join(notes)}")
+    except Exception:
+        pass
+
+    if len("\n".join(sections)) > 3400:
+        return "CODE INTELLIGENCE:\n" + "\n".join(sections)[:3500]
+
+    # 4. Top-level JSON config validation (cheap; only when room remains).
+    try:
+        cfg_notes = check_json_config(root)
+        if cfg_notes:
+            sections.append("CONFIG CHECKS:\n" + "\n".join(cfg_notes)[:1000])
+    except Exception:
+        pass
+
+    # 5. TODO/FIXME anchors in the already-read contents.
+    try:
+        try:
+            annot_items = [(str(p.relative_to(root)), c)
+                           for p, c in files]
+        except ValueError:
+            annot_items = [(str(p), c) for p, c in files]
+        notes_ = scan_annotations(annot_items, max_notes=15)
+        if notes_:
+            sections.append("ANNOTATIONS:\n" + "\n".join(
+                f"{n['path']}:{n['line']}: {n['note']}" for n in notes_)[:1200])
+    except Exception:
+        pass
+
+    # 6. Orientation aids when no file could be read at all — honest disk
+    #    truth (bounds + excludes applied), never invented paths.
+    if not files:
+        try:
+            tree = project_tree(root)
+            if tree:
+                sections.append("PROJECT TREE (readable files only):\n" + tree)
+        except Exception:
+            pass
+        try:
+            rec = recent_files(root, limit=8)
+            if rec:
+                lines = [f"{r['path']} (modified {r['minutes_ago']} min ago)"
+                         for r in rec]
+                sections.append("RECENTLY MODIFIED:\n" + "\n".join(lines)[:1200])
+        except Exception:
+            pass
+
+    if not sections:
         return ""
-    return "CODE INTELLIGENCE:\n" + "\n".join(parts)[:3500]
+    return "CODE INTELLIGENCE:\n" + "\n".join(sections)[:4000]
 
 
 def _maybe_auto_fix(root: Path | None, report: InvestigationReport,

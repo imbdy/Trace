@@ -30,12 +30,13 @@ exception-safe: a tool failing must never break an investigation.
 from __future__ import annotations
 
 import ast
+import json
 import os
 import re
 import shutil
 import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -123,7 +124,11 @@ def search_text(root: Path, pattern: str,
             except OSError:
                 continue
             for i, line in enumerate(text.splitlines(), 1):
-                if rx.search(line.lower()):
+                try:
+                    found = rx.search(line) if regex else rx.search(line.lower())
+                except re.error:
+                    break
+                if found:
                     hits.append(TextHit(path=str(rel).replace("\\", "/"),
                                         line=i,
                                         snippet=line.strip()[:220]))
@@ -132,6 +137,280 @@ def search_text(root: Path, pattern: str,
                 if i > 3_000:
                     break
     return hits
+
+
+# --- bounded-parallelism helpers --------------------------------------------
+# Each expensive tool job (a tree walk, a file parse) is a plain Python call.
+# Running a handful of them concurrently on a small thread pool is the cheap
+# way to make collection faster without restructuring the pipeline.
+
+def _pool_workers(n_tasks: int) -> int:
+    """A small bounded worker count for helper-side I/O parallelism."""
+    return max(1, min(8, n_tasks, (os.cpu_count() or 4) + 2))
+
+
+def _run_map(fn, items: list,
+             fallback_err=None):
+    """Run ``fn`` over ``items`` concurrently, preserving order. Never raises.
+
+    A task that raises yields ``fallback_err(item)`` (or ``None``) in its
+    slot; if the pool itself cannot run, falls back to a sequential map.
+    """
+    if not items:
+        return []
+    if len(items) == 1:
+        try:
+            return [fn(items[0])]
+        except Exception:
+            return [None if fallback_err is None else fallback_err(items[0])]
+
+    def guarded(item):
+        try:
+            return fn(item)
+        except Exception:
+            return None if fallback_err is None else fallback_err(item)
+
+    try:
+        with ThreadPoolExecutor(max_workers=_pool_workers(len(items)),
+                                thread_name_prefix="trace-tools") as ex:
+            return list(ex.map(guarded, items))
+    except Exception:
+        return [guarded(item) for item in items]
+
+
+def search_regex(root: Path, pattern: str,
+                 max_hits: int = 20) -> list[TextHit]:
+    """Regex search over the project; bad patterns yield nothing, not errors."""
+    return search_text(root, pattern, max_hits=max_hits, regex=True)
+
+
+def search_many(root: Path, patterns: list[str],
+                max_hits_each: int = 8) -> dict[str, list[TextHit]]:
+    """Several concurrent searches; dict keyed by pattern (input order).
+
+    Duplicates are collapsed, short/empty patterns dropped, and the whole
+    result is bounded by ``max_hits_each`` — enough to anchor evidence, not
+    enough to flood the bundle.
+    """
+    wanted = [p.strip() for p in (patterns or []) if p and len(p.strip()) >= 2
+              and len(p.strip()) <= 200]
+    ordered = list(dict.fromkeys(wanted))[:6]
+    if not ordered:
+        return {}
+    if len(ordered) == 1:
+        return {ordered[0]: search_text(root, ordered[0], max_hits=max_hits_each)}
+    results: dict[str, list[TextHit]] = {}
+    mapped = _run_map(lambda p: search_text(root, p, max_hits=max_hits_each),
+                      ordered)
+    for pat, hits in zip(ordered, mapped):
+        results[pat] = list(hits or [])
+    return results
+
+
+def find_symbols(root: Path, symbols: list[str],
+                 limit: int = 6) -> dict[str, list[TextHit]]:
+    """Locate several symbols concurrently (definition-ranked per symbol)."""
+    wanted = [s.strip() for s in (symbols or []) if s and s.strip()
+              and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{1,64}", s.strip())]
+    ordered = list(dict.fromkeys(wanted))[:6]
+    if not ordered:
+        return {}
+    if len(ordered) == 1:
+        return {ordered[0]: find_symbol(root, ordered[0], limit=limit)}
+    mapped = _run_map(lambda s: find_symbol(root, s, limit=limit), ordered)
+    out: dict[str, list[TextHit]] = {}
+    for sym, hits in zip(ordered, mapped):
+        out[sym] = list(hits or [])
+    return out
+
+
+def recent_files(root: Path, limit: int = 10) -> list[dict]:
+    """Readable project files most recently modified (bounded walk). Recency
+    is honest disk truth — useful when the query matched nothing. Each entry:
+    ``{"path": rel, "minutes_ago": int, "loc_cap": size_guard}``."""
+    out: list[tuple[float, str]] = []
+    try:
+        root = root.resolve()
+    except OSError:
+        return []
+    count = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
+        dirnames.sort()
+        for fn in sorted(filenames):
+            p = Path(dirpath) / fn
+            try:
+                rel = p.relative_to(root)
+            except ValueError:
+                continue
+            if is_excluded(rel) or not is_readable_name(p):
+                continue
+            try:
+                if p.stat().st_size > 300_000:
+                    continue
+                mtime = p.stat().st_mtime
+            except OSError:
+                continue
+            out.append((mtime, str(rel).replace("\\", "/")))
+            count += 1
+            if count > 20_000:
+                break
+        if count > 20_000:
+            break
+    out.sort(reverse=True)
+    now = time.time()
+    return [{"path": rel, "minutes_ago": max(0, int((now - mt) // 60))}
+            for mt, rel in out[: max(0, limit)]]
+
+
+def project_tree(root: Path, max_depth: int = 2, max_entries: int = 80,
+                 max_chars: int = 2400) -> str:
+    """Bounded directory overview: readable files only, deps excluded.
+
+    A map of *what the verifier could read on disk* — never a promise that
+    more code does not exist. Deterministic ordering, hard caps.
+    """
+    try:
+        root = root.resolve()
+    except OSError:
+        return ""
+    lines: list[str] = [f"{root.name or root}/"]
+    entries = 0
+
+    def walk(dirpath: Path, prefix: str, depth: int) -> None:
+        nonlocal entries
+        if depth < 0 or entries >= max_entries:
+            return
+        try:
+            dirs = sorted(d for d in os.scandir(dirpath) if d.is_dir())
+            files = sorted((f for f in os.scandir(dirpath) if f.is_file()),
+                           key=lambda f: f.name)
+        except OSError:
+            return
+        for d in dirs:
+            if entries >= max_entries:
+                lines.append(prefix + "…")
+                return
+            if d.name in EXCLUDE_DIRS:
+                continue
+            lines.append(f"{prefix}{d.name}/")
+            entries += 1
+            walk(Path(d.path), prefix + "  ", depth - 1)
+        for f in files:
+            if entries >= max_entries:
+                lines.append(prefix + "…")
+                return
+            fp = Path(f.path)
+            if not is_readable_name(fp) or is_excluded(fp.relative_to(root)
+                                                       if fp != root else Path(".")):
+                continue
+            lines.append(f"{prefix}{f.name}")
+            entries += 1
+
+    walk(root, "  ", max_depth)
+    if entries >= max_entries:
+        lines.append(f"…[{entries} entries shown, tree truncated]")
+    return "\n".join(lines)[:max_chars]
+
+
+_TEST_FAIL_PATTERNS = [
+    # pytest short summary: "FAILED tests/test_x.py::Klass::test_y - AssertionError"
+    re.compile(r"(?m)^\s*FAILED\s+([\w/.\-]+\.[A-Za-z]+)(?::(\d+))?"),
+    re.compile(r'(?m)^\s*File "([^"]+)", line (\d+)'),
+    re.compile(r"(?m)^\s*([\w/.\-]+\.(?:py|ts|tsx|js|mjs|cjs|go|rs)):(\d+):"),
+    re.compile(r"(?m)^\s*([\w/.\-]+\.(?:ts|tsx|js|mjs|cjs)):(\d+):\d+"),
+    # unittest: "FAIL: test_x (tests.test_y.Klass)" → tests/test_y.py
+    re.compile(r"(?m)^\s*(?:FAIL|ERROR):\s+\S+\s+\((\w[\w.]*)\.(\w+)\)"),
+]
+
+
+def parse_test_failures(output: str, limit: int = 10) -> list[TextHit]:
+    """Extract file:line anchors from allowlisted test-runner output.
+
+    Everything here comes from the runner's own text — the same parent tool
+    that would print it in your terminal — so the anchors are grounded, and
+    the validator still re-checks anything the model cites from them.
+    """
+    hits: list[TextHit] = []
+    if not output or not output.strip():
+        return hits
+    seen: set[tuple[str, int]] = set()
+    for pat in _TEST_FAIL_PATTERNS:
+        for m in pat.finditer(output[:16_000]):
+            if pat is _TEST_FAIL_PATTERNS[-1]:
+                # (module.Class) form: map "tests.test_y" → "tests/test_y.py".
+                path = m.group(1).replace(".", "/") + ".py"
+                line = 1
+            else:
+                path = m.group(1).replace("\\", "/")
+                line = int(m.group(2) or 1)
+            key = (path, line)
+            if key in seen:
+                continue
+            seen.add(key)
+            hits.append(TextHit(path=path, line=line, snippet="test failure"))
+            if len(hits) >= max(1, limit):
+                return hits
+    return hits
+
+
+def check_json_config(root: Path, limit: int = 15) -> list[str]:
+    """Syntax-check top-level ``*.json`` config files with the stdlib parser.
+
+    A broken package.json/tsconfig.json often *is* the bug; this surfaces it
+    verbatim. Empty return means every checked file parsed — also an honest,
+    useful fact.
+    """
+    notes: list[str] = []
+    if root is None:
+        return notes
+    try:
+        candidates = sorted(root.glob("*.json"))[:limit]
+    except OSError:
+        return notes
+    for p in candidates:
+        try:
+            rel = str(p.relative_to(root)).replace("\\", "/")
+        except ValueError:
+            continue
+        try:
+            if p.stat().st_size > 200_000:
+                notes.append(f"{rel}: too large to check (>200 KB)")
+                continue
+            text = p.read_text(encoding="utf-8", errors="replace")
+        except OSError as e:
+            notes.append(f"{rel}: unreadable ({type(e).__name__})")
+            continue
+        try:
+            json.loads(text)
+        except json.JSONDecodeError as e:
+            notes.append(f"{rel}: invalid JSON — {e}")
+        except Exception:
+            notes.append(f"{rel}: could not parse")
+    return notes
+
+
+_ANNOTATION_RX = re.compile(r"(?i)\b(TODO|FIXME|XXX|HACK)\b")
+
+
+def scan_annotations(items: list[tuple[str, str]],
+                     max_notes: int = 20) -> list[dict]:
+    """TODO/FIXME/XXX/HACK anchors inside already-read file contents.
+
+    Takes ``(relpath, content)`` pairs — no disk access of its own — so it
+    can only ever report what the pipeline actually read.
+    """
+    out: list[dict] = []
+    for rel, content in items or []:
+        if not content:
+            continue
+        for i, line in enumerate(content.splitlines(), 1):
+            if _ANNOTATION_RX.search(line):
+                out.append({"path": str(rel), "line": i,
+                            "note": line.strip()[:160]})
+                if len(out) >= max(1, max_notes):
+                    return out
+    return out
 
 
 def file_outline(path: Path, max_entries: int = 60) -> list[OutlineEntry]:
