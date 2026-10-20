@@ -32,11 +32,18 @@ function historyBar(): HTMLElement {
   head.appendChild(el("span", "history-title", "Past investigations"));
   const search = el("input", "history-search") as HTMLInputElement;
   search.placeholder = "Search…"; search.type = "search";
+  search.setAttribute("aria-label", "Search past investigations");
   head.appendChild(search); bar.appendChild(head);
   const list = el("div", "history-list");
+  // Out-of-order guard: every refresh gets a token; stale responses are
+  // dropped instead of overwriting a newer view.
+  let searchToken = 0;
+  let searchTimer: ReturnType<typeof setTimeout> | null = null;
   const refresh = async (): Promise<void> => {
+    const token = ++searchToken;
     list.replaceChildren(el("span", "muted", "Loading history…"));
     const entries = await window.trace.history(search.value).catch(() => null);
+    if (token !== searchToken) return;
     list.replaceChildren();
     // null (backend down) and [] (nothing recorded) are different states —
     // never render an outage as "no past investigations".
@@ -60,7 +67,12 @@ function historyBar(): HTMLElement {
       list.appendChild(button);
     }
   };
-  search.addEventListener("input", () => void refresh());
+  // Debounce keystrokes so the journal is not re-read on every character;
+  // the token guard above keeps late replies from overwriting the newest.
+  search.addEventListener("input", () => {
+    if (searchTimer !== null) clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => void refresh(), 250);
+  });
   bar.appendChild(list); void refresh();
   return bar;
 }
@@ -360,8 +372,10 @@ function followUpBox(parentId: string): void {
   input.rows = 2;
   input.maxLength = 8000;
   input.placeholder = "What should we check next?";
+  input.setAttribute("aria-label", "Follow-up question for this diagnosis");
   const send = el("button", "follow-send", "Ask") as HTMLButtonElement;
   const note = el("p", "follow-note", "");
+  note.setAttribute("aria-live", "polite");
   const submit = async (): Promise<void> => {
     const text = input.value.trim();
     if (!text || followUpBusy) return;
