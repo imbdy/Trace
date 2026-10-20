@@ -10,10 +10,54 @@ from trace_backend.schemas import (
     RecommendedFix,
 )
 from trace_backend.validator import (
+    MAX_EXCERPT_CHARS,
+    MAX_EXCERPT_LINES,
+    cap_excerpt,
     sanitize_report,
     verify_fix_diff,
     verify_location,
 )
+
+
+class TestExcerptCaps(unittest.TestCase):
+    """A malformed model citation (e.g. lines 1-100000 of a huge file) must
+    never flood the report with megabytes of text."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        body = "\n".join(f"L{i}" for i in range(1, 601))
+        (self.root / "big.py").write_text(body + "\n", encoding="utf-8")
+        (self.root / "app.py").write_text(
+            "def boom():\n    raise ValueError('x')\n", encoding="utf-8")
+
+    def test_oversized_cited_range_is_capped(self):
+        v = verify_location(self.root, "big.py", 1, 600)
+        self.assertTrue(v["exists"] and v["line_valid"])
+        self.assertIn("capped at 400 lines", v["excerpt"])
+        # 400 real excerpt lines + the honest truncation note, never more.
+        self.assertLessEqual(v["excerpt"].count("\n"), MAX_EXCERPT_LINES + 1)
+
+    def test_modest_range_is_not_touched(self):
+        v = verify_location(self.root, "big.py", 5, 10)
+        self.assertNotIn("capped", v["excerpt"])
+        self.assertIn("L10", v["excerpt"])
+
+    def test_model_provided_excerpt_is_capped(self):
+        report = InvestigationReport(
+            investigation_id="inv-1", summary="s", root_cause="r", confidence="high",
+            findings=[Finding(title="flood", file_path="app.py", start_line=1,
+                              end_line=2, code_excerpt="x" * (MAX_EXCERPT_CHARS + 5000))])
+        out = sanitize_report(self.root, report)
+        self.assertTrue(out.findings[0].verified)
+        self.assertLessEqual(len(out.findings[0].code_excerpt),
+                             MAX_EXCERPT_CHARS + 120)
+        self.assertIn("truncated", out.findings[0].code_excerpt)
+
+    def test_cap_excerpt_boundary(self):
+        self.assertNotIn("truncated", cap_excerpt("short"))
+        self.assertIn("truncated", cap_excerpt("y" * (MAX_EXCERPT_CHARS + 1)))
 
 
 class TestVerifyLocation(unittest.TestCase):

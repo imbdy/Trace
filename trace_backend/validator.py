@@ -8,6 +8,12 @@ from pathlib import Path
 from .project_inspector import resolve_within_root
 from .schemas import Finding, InvestigationReport, RecommendedFix
 
+# Bounds for one finding's excerpt in the report. Without a cap, a malformed
+# model citation (e.g. lines 1-100000 of a huge file) floods the report and
+# the UI with megabytes of text.
+MAX_EXCERPT_LINES = 400
+MAX_EXCERPT_CHARS = 8_000
+
 
 def read_lines(path: Path, start: int, end: int, context: int = 0) -> tuple[str, int]:
     """Return (excerpt, total_lines). 1-indexed inclusive range + context."""
@@ -21,8 +27,22 @@ def read_lines(path: Path, start: int, end: int, context: int = 0) -> tuple[str,
     e = min(total, end + context)
     if s > e or total == 0:
         return "", total
-    excerpt = "\n".join(f"{i + 1:>5}: {lines[i]}" for i in range(s - 1, e))
+    window_end = min(e, s + MAX_EXCERPT_LINES - 1)
+    excerpt = "\n".join(f"{i + 1:>5}: {lines[i]}" for i in range(s - 1, window_end))
+    if window_end < e:
+        excerpt += (f"\n … excerpt capped at {MAX_EXCERPT_LINES} lines "
+                    f"(cited range was {start}-{end}); "
+                    "read the file for the rest.")
     return excerpt, total
+
+
+def cap_excerpt(text: str, max_chars: int = MAX_EXCERPT_CHARS) -> str:
+    """Hard cap on excerpt length, cut at a line boundary, honestly labelled."""
+    if len(text) <= max_chars:
+        return text
+    cut = text.rfind("\n", 0, max_chars)
+    head = text[:cut if cut > 0 else max_chars]
+    return head + "\n … excerpt truncated at " + str(max_chars) + " characters."
 
 
 def verify_location(root: Path | None, file_path: str,
@@ -67,6 +87,9 @@ def verify_finding(root: Path | None, finding: Finding) -> Finding:
     if finding.verified:
         if not finding.code_excerpt:
             finding.code_excerpt = verdict["excerpt"]
+        # Cap even model-provided excerpts: a verified location is never an
+        # excuse for a megabyte of text in one finding.
+        finding.code_excerpt = cap_excerpt(finding.code_excerpt)
     else:
         note = verdict.get("warning", "unverified")
         finding.evidence = ((finding.evidence + "\n" if finding.evidence else "")
