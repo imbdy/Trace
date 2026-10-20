@@ -1393,8 +1393,23 @@ class InvestigationEngine:
                 warnings=["Malformed model output: expected JSON, got free text. "
                           "Raw output preserved as an alternative hypothesis."])
         try:
+            # Shape checks: parses-but-wrong JSON (e.g. `{"findings": "none"}`)
+            # previously became a silent empty verdict with no repair chance.
+            shape_warnings: list[str] = []
+            findings_raw = data.get("findings", [])
+            if not isinstance(findings_raw, list):
+                shape_warnings.append("findings was not a list")
+                findings_raw = []
+            alt_raw = data.get("alternative_hypotheses", [])
+            if not isinstance(alt_raw, list):
+                shape_warnings.append("alternative_hypotheses was not a list")
+                alt_raw = []
+            more_raw = data.get("needs_more_info", [])
+            if not isinstance(more_raw, list):
+                shape_warnings.append("needs_more_info was not a list")
+                more_raw = []
             findings = []
-            for f in data.get("findings", []) or []:
+            for f in findings_raw:
                 if not isinstance(f, dict):
                     continue
                 try:
@@ -1412,7 +1427,10 @@ class InvestigationEngine:
                     continue
             rec = data.get("recommended_fix") or {}
             recommended = None
-            if isinstance(rec, dict) and (rec.get("description") or rec.get("diff")):
+            if not isinstance(rec, dict):
+                shape_warnings.append("recommended_fix was not an object")
+                rec = {}
+            elif rec.get("description") or rec.get("diff"):
                 recommended = RecommendedFix(
                     description=str(rec.get("description", ""))[:4000],
                     diff=str(rec.get("diff"))[:8000] if rec.get("diff") else None,
@@ -1428,11 +1446,11 @@ class InvestigationEngine:
                 confidence_rationale=str(data.get("confidence_rationale", ""))[:2000],
                 findings=findings,
                 recommended_fix=recommended,
-                alternative_hypotheses=[str(h)[:2000] for h in
-                                        (data.get("alternative_hypotheses", []) or [])][:10],
-                needs_more_info=[str(n)[:1000] for n in
-                                 (data.get("needs_more_info", []) or [])][:10],
+                alternative_hypotheses=[str(h)[:2000] for h in alt_raw][:10],
+                needs_more_info=[str(n)[:1000] for n in more_raw][:10],
                 evidence_summary=str(data.get("evidence_summary", ""))[:4000],
+                warnings=(["Malformed model output: " + "; ".join(shape_warnings)
+                           + "."] if shape_warnings else []),
             )
         except Exception as e:
             return InvestigationReport(
