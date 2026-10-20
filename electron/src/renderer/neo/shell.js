@@ -49,7 +49,7 @@
   var fitTimer = null;
   // Explicit final sizes: the panel widens (main re-perches the window at
   // every size, so it stays in the middle), height follows content.
-  var OPEN_W = 732;   // 660 panel + 44 sill pads + 28 shadow pad
+  var OPEN_W = 632;   // 560 panel (#leaf.open) + 44 sill pads + 28 shadow pad
   var CLOSED_W = 408; // 336 panel + 44 sill pads + 28 shadow pad
   function requestFitSettled() {
     clearTimeout(fitTimer);

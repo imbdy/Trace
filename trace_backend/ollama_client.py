@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import socket
 import threading
@@ -198,6 +199,19 @@ class OllamaClient:
                 raw = resp_cm.read()
                 return self._parse_nonstream(raw)
             return self._read_stream(resp_cm, on_token, cancel_event, timeout)
+        except OllamaError:
+            raise
+        except (socket.timeout, TimeoutError) as e:
+            raise OllamaTimeoutError(
+                f"Ollama response timed out after {timeout}s.",
+                hint="The model may be slow; retry, or raise TRACE_READ_TIMEOUT_S.",
+            ) from e
+        except (http.client.HTTPException, urllib.error.URLError,
+                ConnectionError, OSError) as e:
+            # The connection died mid-response (stream reset, dropped socket):
+            # surface it as an OllamaError so callers produce an honest
+            # low-confidence report instead of an internal error.
+            raise self._friendly_connection_error(e) from e
         finally:
             try:
                 if hasattr(resp_cm, "close"):

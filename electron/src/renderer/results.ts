@@ -36,15 +36,25 @@ function historyBar(): HTMLElement {
   const list = el("div", "history-list");
   const refresh = async (): Promise<void> => {
     list.replaceChildren(el("span", "muted", "Loading history…"));
-    const entries = await window.trace.history(search.value).catch(() => []);
+    const entries = await window.trace.history(search.value).catch(() => null);
     list.replaceChildren();
+    // null (backend down) and [] (nothing recorded) are different states —
+    // never render an outage as "no past investigations".
+    if (!entries) { list.appendChild(el("span", "muted", "History unavailable.")); return; }
     if (!entries.length) { list.appendChild(el("span", "muted", "No past investigations yet.")); return; }
     for (const item of entries) {
-      const id = typeof item.investigation_id === "string" ? item.investigation_id : "";
+      if (!item || typeof item !== "object") continue;
+      const id = asString((item as Record<string, unknown>).investigation_id);
       if (!id) continue;
       const button = el("button", "history-item") as HTMLButtonElement;
-      const summary = typeof item.summary === "string" && item.summary.trim() ? item.summary : "Investigation";
-      const date = typeof item.created_at === "number" ? new Date(item.created_at * 1000).toLocaleString() : "";
+      const o = item as Record<string, unknown>;
+      const summary = asString(o.summary).trim() ? asString(o.summary) : "Investigation";
+      // Contract timestamps are seconds; clamp a stray ms value instead of
+      // rendering a year-50000 date.
+      const ts = typeof o.created_at === "number"
+        ? (o.created_at > 1e12 ? o.created_at : o.created_at * 1000)
+        : NaN;
+      const date = Number.isFinite(ts) ? new Date(ts).toLocaleString() : "";
       button.append(el("span", "history-summary", summary), el("span", "history-date", date));
       button.addEventListener("click", () => void window.trace.showHistory(id));
       list.appendChild(button);
@@ -60,6 +70,81 @@ function el(tag: string, cls: string, text?: string): HTMLElement {
   if (cls) n.className = cls;
   if (text !== undefined) n.textContent = text;
   return n;
+}
+
+// --- defensive reads: the backend's status JSON is trusted at the contract
+// level but never at the field level (old payloads, restarts, skew). A
+// malformed report must degrade to honest text, never a blank window.
+
+function asString(v: unknown): string {
+  return typeof v === "string" ? v : "";
+}
+
+function asStringList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
+function normalizeFinding(raw: unknown): RendererFinding | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const start = typeof o.start_line === "number" && o.start_line > 0 ? Math.floor(o.start_line) : 0;
+  const end = typeof o.end_line === "number" && o.end_line >= start ? Math.floor(o.end_line) : 0;
+  const f: RendererFinding = {
+    title: asString(o.title),
+    file_path: asString(o.file_path),
+    start_line: start,
+    end_line: end,
+    code_excerpt: asString(o.code_excerpt),
+    explanation: asString(o.explanation),
+    evidence: asString(o.evidence),
+    confidence: asString(o.confidence) || "medium",
+    verified: o.verified === true,
+  };
+  const git = asString(o.git_context);
+  if (git) f.git_context = git;
+  return f;
+}
+
+function normalizeStatus(raw: unknown): RendererStatus {
+  const st = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const status = asString(st.status) as RendererStatus["status"];
+  const repRaw = st.report;
+  let report: RendererReport | null = null;
+  if (repRaw && typeof repRaw === "object" && !Array.isArray(repRaw)) {
+    const r = repRaw as Record<string, unknown>;
+    const findings = Array.isArray(r.findings)
+      ? r.findings.map(normalizeFinding).filter((f): f is RendererFinding => f !== null)
+      : [];
+    const fixRaw = r.recommended_fix;
+    const fix = fixRaw && typeof fixRaw === "object" && !Array.isArray(fixRaw)
+      ? fixRaw as RendererFix : null;
+    const appliedRaw = r.fix_applied && typeof r.fix_applied === "object" && !Array.isArray(r.fix_applied)
+      ? r.fix_applied as RendererFixApplied : null;
+    report = {
+      summary: asString(r.summary),
+      root_cause: asString(r.root_cause),
+      confidence: asString(r.confidence) || "low",
+      confidence_rationale: asString(r.confidence_rationale),
+      findings,
+      recommended_fix: fix,
+      alternative_hypotheses: asStringList(r.alternative_hypotheses),
+      needs_more_info: asStringList(r.needs_more_info),
+      evidence_summary: asString(r.evidence_summary),
+      warnings: asStringList(r.warnings),
+      fix_applied: appliedRaw,
+    };
+  }
+  return {
+    investigation_id: asString(st.investigation_id),
+    status: status === "running" || status === "done" || status === "error" || status === "cancelled"
+      ? status : "error",
+    progress: typeof st.progress === "number" ? st.progress : 0,
+    stage: asString(st.stage),
+    investigation_type: asString(st.investigation_type) || "debug",
+    report,
+    error: st.error && typeof st.error === "object" && !Array.isArray(st.error)
+      ? st.error as RendererStatus["error"] : null,
+  };
 }
 
 function esc(s: string): string {
@@ -346,7 +431,6 @@ function render(status: RendererStatus): void {
   const verified = r.findings.filter((f) => f.verified);
   const hypo = r.findings.filter((f) => !f.verified);
   const fix = r.recommended_fix;
-
   const tabs: [string, string][] = [["answer", "Answer"], ["code", "Code & Diff"], ["evidence", "Evidence"]];
   if (!tabs.some(([id]) => id === activeTab)) activeTab = "answer";
   const panels: Record<string, HTMLElement> = {};
@@ -426,9 +510,18 @@ function render(status: RendererStatus): void {
 
 window.trace.onReport((status) => {
   try {
-    render(status as RendererStatus);
+    render(normalizeStatus(status));
   } catch (e) {
+    // A render failure must not blank the workspace: keep the header and
+    // history bar, and degrade to an honest banner instead of an empty page.
     root.innerHTML = "";
+    mount = root;
+    try {
+      root.appendChild(appHeader(normalizeStatus(status)));
+      root.appendChild(historyBar());
+    } catch {
+      /* even chrome failed; the banner still shows */
+    }
     banner(`Could not display results: ${(e as Error).message}`, "error");
   }
 });

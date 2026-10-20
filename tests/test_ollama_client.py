@@ -111,6 +111,46 @@ class TestOllamaClient(unittest.TestCase):
             with self.assertRaises(OllamaCancelledError):
                 client.generate("hi", stream=True, cancel_event=cancel)
 
+    def test_stream_disconnect_is_an_ollama_error(self):
+        """A socket reset mid-stream (after connect) must surface as a
+        mapped OllamaError, not a raw ConnectionResetError — callers turn the
+        mapped error into an honest low-confidence report."""
+        client = OllamaClient(_cfg())
+
+        class DroppingResp(FakeResp):
+            def readline(self):
+                raise ConnectionResetError("reset by peer")
+
+        with mock.patch("urllib.request.urlopen", return_value=DroppingResp(b"")):
+            with self.assertRaises(OllamaConnectionError):
+                client.generate("hi", stream=True)
+
+    def test_nonstream_read_disconnect_is_an_ollama_error(self):
+        client = OllamaClient(_cfg())
+
+        class DroppingResp(FakeResp):
+            def read(self, *a):
+                raise ConnectionResetError("reset by peer")
+
+        with mock.patch("urllib.request.urlopen",
+                        return_value=DroppingResp(b'{"message": {"content": ""}}')):
+            with self.assertRaises(OllamaConnectionError):
+                client.generate("hi")
+
+    def test_stream_incomplete_read_is_an_ollama_error(self):
+        """http.client.IncompleteRead (chunked response dropped) is not an
+        OSError subclass — it must still map, not escape."""
+        import http.client as _hc
+        client = OllamaClient(_cfg())
+
+        class DroppingResp(FakeResp):
+            def readline(self):
+                raise _hc.IncompleteRead(b"partial")
+
+        with mock.patch("urllib.request.urlopen", return_value=DroppingResp(b"")):
+            with self.assertRaises(OllamaError):
+                client.generate("hi", stream=True)
+
 
 if __name__ == "__main__":
     unittest.main()

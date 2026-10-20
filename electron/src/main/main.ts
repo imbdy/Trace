@@ -213,6 +213,24 @@ function createResults(): BrowserWindow {
   return win;
 }
 
+// Broadcasts a final status to any EXISTING windows only — never creates or
+// shows one. Used for the quiet fix-in-place path and as the fan-out half of
+// showResults.
+function sendReport(status: InvestigationStatus): void {
+  try {
+    charWin?.webContents.send("trace:report", status);
+  } catch {
+    /* ignore */
+  }
+  if (resultsWin && !resultsWin.isDestroyed()) {
+    try {
+      resultsWin.webContents.send("trace:report", status);
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 function showResults(status?: InvestigationStatus | null): boolean {
   const st = status ?? lastStatus;
   if (!st) return false;
@@ -222,12 +240,7 @@ function showResults(status?: InvestigationStatus | null): boolean {
   }
   // Both windows hear the verdict: the results window renders it, the
   // character window performs it (panel finish + creature state).
-  try {
-    charWin?.webContents.send("trace:report", st);
-  } catch {
-    /* ignore */
-  }
-  resultsWin.webContents.send("trace:report", st);
+  sendReport(st);
   if (!resultsWin.isVisible()) {
     resultsWin.showInactive(); // never steal editor focus on auto-open
     try {
@@ -293,26 +306,29 @@ function emitStage(ev: { investigation_id?: string; stage: string; message: stri
   }
 }
 
-async function runInvestigation(text: string, opts: Record<string, unknown>, followUpOf?: string): Promise<void> {
-  if (run) return;
-  const abort = new AbortController();
-  const autoFix = !followUpOf && (opts.autoFix === true || (opts as { auto_fix?: boolean }).auto_fix === true);
-  const investigationType =
-    (opts.investigation_type === "explain" ? "explain" : "debug");
+function shapeRunError(e: unknown): { message: string; code: string } {
+  const err = e as ApiError;
+  const message = err instanceof ApiError
+    ? `${err.message}${err.hint ? " " + err.hint : ""}`
+    : String(e);
+  return { message, code: (err as ApiError)?.code ?? "internal" };
+}
+
+function errorStatus(investigationId: string, shaped: { message: string; code: string }): InvestigationStatus {
+  return {
+    investigation_id: investigationId,
+    status: "error",
+    progress: 0,
+    stage: "error",
+    report: null,
+    error: { code: shaped.code, message: shaped.message },
+  };
+}
+
+// Streams one running investigation to the character window, then lands the
+// final status (notifications + results window + both-report broadcast).
+async function streamRun(id: string, abort: AbortController, autoFix: boolean): Promise<void> {
   try {
-    const id = followUpOf
-      ? await api.followUp(followUpOf, text)
-      : await api.start({
-          request_text: text,
-          project_dir: (opts.projectDir as string) || projectDirArg,
-          include_screenshot: true,
-          screenshot_mode: "active",
-          include_clipboard: false,
-          auto_fix: autoFix,
-          investigation_type: investigationType,
-        });
-    run = { id, abort };
-    emitStage({ investigation_id: id, stage: "receive", message: "Sending request…", progress: 0.02 });
     for await (const ev of api.events(id, abort.signal)) {
       const e = ev as ProgressEvent;
       emitStage({ investigation_id: id, stage: e.stage, message: e.message, progress: e.progress });
@@ -344,9 +360,12 @@ async function runInvestigation(text: string, opts: Record<string, unknown>, fol
       const fixed = status.report.fix_applied;
       if (autoFix && fixed && fixed.applied) {
         // "What's wrong, then go fix it": stay quiet, no results window —
-        // the bug is already fixed in place (backups kept).
+        // the bug is already fixed in place (backups kept). Both windows
+        // still hear the verdict: the panel settles and shows "Fixed"
+        // instead of shimmering on the last stage forever.
         const files = (fixed.applied_files ?? []).join(", ") || "the files";
         notifyDone("Trace — fixed in place", `Fixed ${files}. Backups kept (*.trace-bak).`);
+        sendReport(status);
         return;
       }
       notifyDone(
@@ -361,24 +380,59 @@ async function runInvestigation(text: string, opts: Record<string, unknown>, fol
     showResults(status);
   } catch (e) {
     if ((e as Error).name === "AbortError") {
-      emitStage({ stage: "cancelled", message: "Cancelled.", progress: 0 });
+      emitStage({ investigation_id: id, stage: "cancelled", message: "Cancelled.", progress: 0 });
       return;
     }
-    const err = e as ApiError;
-    const msg = err instanceof ApiError ? `${err.message}${err.hint ? " " + err.hint : ""}` : String(e);
-    emitStage({ stage: "error", message: msg.slice(0, 300), progress: 0 });
-    const st: InvestigationStatus = {
-      investigation_id: run?.id ?? "",
-      status: "error",
-      progress: 0,
-      stage: "error",
-      report: null,
-      error: { code: (err as ApiError)?.code ?? "internal", message: msg },
-    };
+    const shaped = shapeRunError(e);
+    emitStage({ investigation_id: id, stage: "error", message: shaped.message.slice(0, 300), progress: 0 });
+    const st = errorStatus(id, shaped);
     lastStatus = st;
     showResults(st);
   } finally {
+    if (run && run.id === id) run = null;
+  }
+}
+
+// Starts an investigation and hands streaming off to the background; resolves
+// with the backend's investigation id as soon as it exists, so the renderer
+// can identify (and filter stale events from) this run.
+async function runInvestigation(text: string, opts: Record<string, unknown>, followUpOf?: string): Promise<string | null> {
+  if (run) return null;
+  const abort = new AbortController();
+  // Reserve the single-run slot synchronously so two overlapping IPC submits
+  // cannot both pass the guard above; the real id replaces "" on start.
+  run = { id: "", abort };
+  const autoFix = !followUpOf && (opts.autoFix === true || (opts as { auto_fix?: boolean }).auto_fix === true);
+  const investigationType =
+    (opts.investigation_type === "explain" ? "explain" : "debug");
+  try {
+    const id = followUpOf
+      ? await api.followUp(followUpOf, text)
+      : await api.start({
+          request_text: text,
+          project_dir: (opts.projectDir as string) || projectDirArg,
+          include_screenshot: true,
+          screenshot_mode: "active",
+          include_clipboard: false,
+          auto_fix: autoFix,
+          investigation_type: investigationType,
+        });
+    run = { id, abort };
+    emitStage({ investigation_id: id, stage: "receive", message: "Sending request…", progress: 0.02 });
+    void streamRun(id, abort, autoFix);
+    return id;
+  } catch (e) {
     run = null;
+    if ((e as Error).name === "AbortError") {
+      emitStage({ stage: "cancelled", message: "Cancelled.", progress: 0 });
+      return null;
+    }
+    const shaped = shapeRunError(e);
+    emitStage({ stage: "error", message: shaped.message.slice(0, 300), progress: 0 });
+    const st = errorStatus(run?.id ?? "", shaped);
+    lastStatus = st;
+    showResults(st);
+    return null;
   }
 }
 
@@ -400,7 +454,7 @@ function buildTray(): void {
         { label: "Open results", click: () => showResults() },
         { label: "Check for updates", enabled: app.isPackaged, click: () => { void autoUpdater.checkForUpdates().catch(() => undefined); } },
         { type: "separator" },
-        { label: "Quit Trace", click: () => { try { app.exit(0); } catch { /* ignore */ } } },
+        { label: "Quit Trace", click: () => { try { app.quit(); } catch { /* ignore */ } } },
       ]);
       tray.setContextMenu(menu);
     } catch {
@@ -472,8 +526,8 @@ function setupIpc(): void {
         return { ok: false as const, reason: "backend_down" };
       }
     }
-    void runInvestigation(text.trim().slice(0, 8000), opts ?? {});
-    return { ok: true as const };
+    const id = await runInvestigation(text.trim().slice(0, 8000), opts ?? {});
+    return id ? { ok: true as const, id } : { ok: true as const };
   });
 
   ipcMain.handle("trace:follow-up", async (_e, parentId: string, text: string) => {
@@ -484,8 +538,8 @@ function setupIpc(): void {
       const ok = await backend.ensure(__dirname);
       if (!ok) return { ok: false as const, reason: "backend_down" };
     }
-    void runInvestigation(text.trim().slice(0, 8000), {}, parentId.trim());
-    return { ok: true as const };
+    const followId = await runInvestigation(text.trim().slice(0, 8000), {}, parentId.trim());
+    return followId ? { ok: true as const, id: followId } : { ok: true as const };
   });
 
   ipcMain.handle("trace:cancel", async () => {
@@ -505,7 +559,7 @@ function setupIpc(): void {
 
   ipcMain.handle("trace:history", async (_e, query: string) => {
     try { return await api.history(50, typeof query === "string" ? query : ""); }
-    catch { return []; }
+    catch { return null; } // null = backend down (distinct from "no history")
   });
 
   ipcMain.handle("trace:show-history", async (_e, id: string) => {
@@ -592,7 +646,7 @@ async function runSmoke(projectDir: string): Promise<number> {
     focused: document.activeElement ? document.activeElement.id : '',
   }))()`);
   A(openState.open === true, "shell click expands the chat");
-  A(hb1.width === 732 && hb1.x + hb1.width / 2 === hb0.x + hb0.width / 2,
+  A(hb1.width === 632 && hb1.x + hb1.width / 2 === hb0.x + hb0.width / 2,
     "expansion re-perches: he stays in the middle", JSON.stringify(hb1));
   // The composer now carries a one-line "fix it for me" toggle, so the open
   // leaf is slightly taller than the collapsed sill — bounded growth only.

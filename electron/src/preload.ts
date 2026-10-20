@@ -7,12 +7,12 @@ export interface TraceBridge {
   resize: (w: number, h: number) => void;
   hide: () => void;
   submit: (text: string, opts?: Record<string, unknown>) => Promise<{ ok: boolean; id?: string; reason?: string }>;
-  followUp: (parentId: string, text: string) => Promise<{ ok: boolean; reason?: string }>;
+  followUp: (parentId: string, text: string) => Promise<{ ok: boolean; id?: string; reason?: string }>;
   cancel: () => Promise<{ ok: boolean }>;
   applyFix: (id: string, dryRun?: boolean) => Promise<Record<string, unknown>>;
   showResults: () => Promise<{ ok: boolean }>;
   current: () => Promise<{ id: string | null }>;
-  history: (query?: string) => Promise<Record<string, unknown>[]>;
+  history: (query?: string) => Promise<Record<string, unknown>[] | null>;
   showHistory: (id: string) => Promise<{ ok: boolean; reason?: string }>;
   openFile: (path: string, line?: number) => Promise<Record<string, unknown>>;
   onStage: (cb: (ev: { investigation_id?: string; stage: string; message: string; progress: number }) => void) => void;
