@@ -1,5 +1,6 @@
 """Tests: cancellation, missing project, screenshot cleanup, inspector safety."""
 
+import json
 import tempfile
 import threading
 import time
@@ -295,6 +296,34 @@ class TestGraphBehaviors(unittest.TestCase):
         with mock.patch.object(eng_mod, "collect_diagnostics", return_value=[]):
             report = engine.investigate(req)
         self.assertEqual(report.confidence, "low")
+
+    def test_semantically_malformed_json_triggers_repair(self):
+        """`{"findings": "none"}` parses fine but is shape-wrong: it must be
+        re-asked once instead of silently accepted as an empty verdict."""
+        bad = json.dumps({"summary": "none", "root_cause": "none",
+                          "confidence": "high", "findings": "none"})
+        queue_engine, queue_ollama = self._engine([bad, GOOD_JSON])
+        req = InvestigationRequest(
+            request_text="AttributeError in app.py",
+            project_dir=str(self.root), include_screenshot=False)
+        with mock.patch.object(eng_mod, "collect_diagnostics", return_value=[]):
+            report = queue_engine.investigate(req)
+        self.assertEqual(queue_ollama.calls, 2, "shape-wrong verdict must be re-asked")
+        self.assertTrue(report.findings)
+
+    def test_empty_findings_list_is_not_malformed(self):
+        """A legal honest `findings: []` verdict must NOT trigger a repair."""
+        honest = json.dumps({"summary": "not enough evidence",
+                             "root_cause": "unclear", "confidence": "low",
+                             "findings": []})
+        engine, ollama = self._engine([honest])
+        req = InvestigationRequest(
+            request_text="AttributeError in app.py",
+            project_dir=str(self.root), include_screenshot=False)
+        with mock.patch.object(eng_mod, "collect_diagnostics", return_value=[]):
+            report = engine.investigate(req)
+        self.assertEqual(ollama.calls, 1, "empty findings is a legal verdict")
+        self.assertFalse(any("Malformed" in w for w in report.warnings))
 
     def test_collection_failure_is_recorded_not_fatal(self):
         """A tool that raises inside a parallel branch must degrade to a
