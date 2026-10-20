@@ -641,6 +641,10 @@ class AgentState:
     mode: str = "debug"  # "debug" | "explain"
     # capture fan-out results
     shot: ScreenshotResult | None = None
+    # The screenshot branch records its result here the instant it exists, so
+    # a cancellation that lands before the merge can still be disposed by the
+    # engine's finally (otherwise the temp file leaked on disk).
+    pending_shot: ScreenshotResult | None = None
     screenshot_b64: str | None = None
     screenshot_note: str = "screenshots disabled by request"
     ctx: LocalContext = field(default_factory=LocalContext)
@@ -715,6 +719,9 @@ def _capture_screenshot_branch(state: AgentState) -> tuple:
     try:
         shot = capture_screenshot(mode=state.request.screenshot_mode,
                                   max_dim=state.config.max_screenshot_dim)
+        # Record BEFORE the merge: if cancel fires between this return and
+        # the merge, the engine's finally can still dispose the temp file.
+        state.pending_shot = shot
         return ("ok", shot)
     except (ScreenshotCaptureError, ValueError) as e:
         hint = getattr(e, "hint", "")
@@ -1153,6 +1160,10 @@ class InvestigationEngine:
             finally:
                 if state.shot is not None:
                     dispose(state.shot)
+                elif state.pending_shot is not None:
+                    # The merge never promoted it to state.shot — dispose
+                    # the pending capture so its temp file cannot leak.
+                    dispose(state.pending_shot)
             if state.report is not None:
                 return state.report
             # Defensive: the graph exhausted routing without a verdict.
