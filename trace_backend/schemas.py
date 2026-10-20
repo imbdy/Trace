@@ -16,6 +16,27 @@ def _now() -> float:
     return time.time()
 
 
+def _as_bool(value) -> bool:
+    """Boolean coercion that cannot be fooled by strings.
+
+    ``bool("false")`` is ``True`` in Python — a client sending the string
+    ``"false"`` would silently enable the clipboard or auto-fix. Accepted:
+    real booleans, 0/1, and 'true'/'false'/'yes'/'no'/'on'/'off'/'1'/'0' in
+    any case. Anything else: warn-worthy flags stay OFF by default (safe).
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("true", "1", "yes", "on"):
+            return True
+        if v in ("false", "0", "no", "off", "", "none", "null"):
+            return False
+    return False
+
+
 @dataclass
 class InvestigationRequest:
     request_text: str
@@ -60,16 +81,20 @@ class InvestigationRequest:
         return cls(
             request_text=str(data.get("request_text", "")),
             project_dir=data.get("project_dir"),
-            include_screenshot=bool(data.get("include_screenshot", True)),
+            include_screenshot=_as_bool(data.get("include_screenshot", True)),
             screenshot_mode=str(data.get("screenshot_mode", "active")),
-            include_clipboard=bool(data.get("include_clipboard", False)),
+            include_clipboard=_as_bool(data.get("include_clipboard", False)),
             editor_selection=data.get("editor_selection"),
             terminal_output=data.get("terminal_output"),
             extra_context=data.get("extra_context"),
             follow_up_of=data.get("follow_up_of"),
-            auto_fix=bool(data.get("auto_fix", False)),
-            run_tests=bool(data.get("run_tests", False)),
-            investigation_type=str(data.get("investigation_type", "debug")),
+            auto_fix=_as_bool(data.get("auto_fix", False)),
+            run_tests=_as_bool(data.get("run_tests", False)),
+            # Unknown types are confessed as "debug" fallback rather than
+            # leaking an arbitrary string into the engine's dispatch.
+            investigation_type=("explain"
+                                if str(data.get("investigation_type", "debug")).strip().lower()
+                                == "explain" else "debug"),
         )
 
     def to_dict(self) -> dict:
