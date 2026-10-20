@@ -40,6 +40,13 @@ from .schemas import (
 )
 
 
+# Subscriber fairness / memory caps. A subscriber queue holds at most 200
+# events (~a few KB each); slower consumers drop progress ticks, but a
+# TERMINAL event is always delivered (see _offer) so nobody waits forever.
+TERMINAL_STATUSES = ("done", "error", "cancelled")
+_SUBSCRIBER_QUEUE_MAX = 200
+
+
 class _Job:
     def __init__(self, inv_id: str, request: InvestigationRequest,
                  prior_report: dict | None = None):
@@ -93,15 +100,63 @@ class InvestigationStore:
         t.start()
         return job
 
+    def _offer(self, q: queue.Queue, item, must: bool = False) -> bool:
+        """Deliver one item to a subscriber queue without ever blocking.
+
+        ``must=False``: on a full queue the item is dropped (a slow SSE
+        client loses one progress tick).  ``must=True``: the oldest queued
+        item is discarded first, so terminal events always arrive — without
+        this a full queue would strand the stream past its terminator and
+        the client would keepalive forever.
+        """
+        try:
+            q.put_nowait(item)
+            return True
+        except queue.Full:
+            if not must:
+                return False
+            try:
+                q.get_nowait()
+            except queue.Empty:
+                pass
+            return self._offer(q, item, must)
+
+    def _broadcast(self, job: _Job, item, must: bool = False) -> None:
+        with self.lock:
+            for q in list(job.subscribers):
+                self._offer(q, item, must=must)
+
+    def subscribe(self, job: _Job) -> queue.Queue:
+        """Register a new SSE subscriber, replay-safe and race-free.
+
+        Registration and the history snapshot happen under the same lock the
+        publisher holds, so an event is either already in the snapshot or
+        fanned out to this queue — exactly once, never both, never missing.
+        """
+        q: queue.Queue = queue.Queue(maxsize=_SUBSCRIBER_QUEUE_MAX)
+        with self.lock:
+            job.subscribers.append(q)
+            snapshot = list(job.events)
+            terminal = job.status in TERMINAL_STATUSES
+        # Replay outside the lock; a fresh queue overflows only when the run
+        # produced >200 events — then the oldest replayed items are dropped
+        # (the newest matter most) and the terminator is still guaranteed.
+        for item in snapshot:
+            self._offer(q, item, must=True)
+        if terminal:
+            # Contract: a finished job's queue ALWAYS ends with exactly one
+            # None terminator, so the HTTP loop can never stay in keepalive
+            # purgatory on a late join.
+            self._offer(q, None, must=True)
+        return q
+
     def _publish(self, job: _Job, ev: ProgressEvent):
         job.stage = ev.stage
         job.progress = ev.progress
-        job.events.append(ev)
-        for q in list(job.subscribers):
-            try:
-                q.put_nowait(ev)
-            except queue.Full:
-                pass
+        with self.lock:
+            job.events.append(ev)
+            for q in list(job.subscribers):
+                self._offer(q, ev)
 
     def _run(self, job: _Job):
         def cb(ev: ProgressEvent):
@@ -140,13 +195,10 @@ class InvestigationStore:
         finally:
             done = ProgressEvent(job.id, job.status,
                                  f"Investigation {job.status}.", job.progress)
-            job.events.append(done)
-            for q in list(job.subscribers):
-                try:
-                    q.put_nowait(done)
-                    q.put_nowait(None)  # stream terminator
-                except queue.Full:
-                    pass
+            self._publish(job, done)
+            # The terminator MUST reach every subscriber even on a full queue:
+            # without it the SSE loop only ever sees keepalives.
+            self._broadcast(job, None, must=True)
             self._record(job)
 
     def _record(self, job: _Job) -> None:
@@ -343,15 +395,7 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
             if job is None:
                 return self._send_json(error_envelope(
                     "not_found", f"Unknown investigation {inv_id}"), 404)
-            q: queue.Queue = queue.Queue(maxsize=200)
-            job.subscribers.append(q)
-            try:
-                for ev in list(job.events):
-                    q.put_nowait(ev)
-                if job.status in ("done", "error", "cancelled"):
-                    q.put_nowait(None)
-            except queue.Full:
-                pass
+            q = store.subscribe(job)
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
@@ -370,9 +414,10 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                     if isinstance(item, ProgressEvent):
                         self.wfile.write(item.to_sse().encode("utf-8"))
                         self.wfile.flush()
-                    if item.stage in ("done", "error", "cancelled"):
-                        # terminal event already queued; terminator follows
-                        continue
+                    if item.stage in TERMINAL_STATUSES:
+                        # The terminal event itself ends the stream (defence
+                        # in depth alongside the None terminator).
+                        break
             except (ConnectionError, BrokenPipeError):
                 pass
             finally:
