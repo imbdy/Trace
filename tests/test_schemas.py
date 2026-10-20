@@ -3,7 +3,67 @@
 import unittest
 
 from trace_backend.investigation_engine import InvestigationEngine
-from trace_backend.schemas import InvestigationReport, InvestigationStatus
+from trace_backend.schemas import (
+    InvestigationReport,
+    InvestigationRequest,
+    InvestigationStatus,
+)
+
+
+class TestBooleanCoercion(unittest.TestCase):
+    """Flag coercion must not be fooled by strings: bool("false") is True."""
+
+    def test_string_false_never_enables_privacy_sensitive_flags(self):
+        for flag in ("include_clipboard", "auto_fix", "run_tests"):
+            data = {"request_text": "x", flag: "false"}
+            req = InvestigationRequest.from_dict(data)
+            self.assertFalse(getattr(req, flag),
+                             f"the string 'false' must disable {flag}")
+        req = InvestigationRequest.from_dict({"request_text": "x", flag: "no"})
+        self.assertFalse(getattr(req, flag))
+        req = InvestigationRequest.from_dict({"request_text": "x", flag: "0"})
+        self.assertFalse(getattr(req, flag))
+        req = InvestigationRequest.from_dict({"request_text": "x", flag: "null"})
+        self.assertFalse(getattr(req, flag))
+
+    def test_string_true_and_real_bools_still_work(self):
+        req = InvestigationRequest.from_dict({"request_text": "x",
+                                              "auto_fix": "true"})
+        self.assertTrue(req.auto_fix)
+        req = InvestigationRequest.from_dict({"request_text": "x",
+                                              "auto_fix": True})
+        self.assertTrue(req.auto_fix)
+        req = InvestigationRequest.from_dict({"request_text": "x",
+                                              "auto_fix": 1})
+        self.assertTrue(req.auto_fix)
+        req = InvestigationRequest.from_dict({"request_text": "x",
+                                              "auto_fix": "TRUE"})
+        self.assertTrue(req.auto_fix)
+        # Unknown garbage defaults to OFF (safe).
+        req = InvestigationRequest.from_dict({"request_text": "x",
+                                              "auto_fix": "maybe"})
+        self.assertFalse(req.auto_fix)
+
+    def test_include_screenshot_default_and_type_garbage(self):
+        req = InvestigationRequest.from_dict({"request_text": "x"})
+        self.assertTrue(req.include_screenshot)          # documented default
+        req = InvestigationRequest.from_dict({"request_text": "x",
+                                              "include_screenshot": "false"})
+        self.assertFalse(req.include_screenshot)
+        req = InvestigationRequest.from_dict({"request_text": "x",
+                                              "include_screenshot": {"n": 1}})
+        self.assertFalse(req.include_screenshot,
+                         "garbage types default to off for optional flags")
+
+    def test_unknown_investigation_type_coerced_to_debug(self):
+        for value in ("ghost", "", None, "DEBUG!"):
+            req = InvestigationRequest.from_dict(
+                {"request_text": "x", "investigation_type": value})
+            self.assertEqual(req.investigation_type, "debug")
+        req = InvestigationRequest.from_dict(
+            {"request_text": "x", "investigation_type": "Explain"})
+        self.assertEqual(req.investigation_type, "explain",
+                         "case-insensitive 'explain' must map honestly")
 
 
 class TestSchemas(unittest.TestCase):
