@@ -945,10 +945,12 @@ def _node_analyze(state: AgentState) -> str:
         files=state.files, diagnostics=state.diagnostics,
         local_summary=state.ctx.summary() + "\n" + state.screenshot_note,
         budget_chars=state.config.max_context_chars)
-    if state.intelligence:
-        bundle = (bundle + "\n\n---\n\n" + state.intelligence)[:state.config.max_context_chars]
-    if state.test_note:
-        bundle = (bundle + "\n\n---\n\n" + state.test_note)[:state.config.max_context_chars]
+    # intelligence/test_note are raw disk text (search hits, TODO lines, test
+    # output); redact them like the rest of the bundle before the model call.
+    for extra in (state.intelligence, state.test_note):
+        if extra:
+            bundle = (bundle + "\n\n---\n\n"
+                      + redact_secrets(extra))[:state.config.max_context_chars]
     if is_explain:
         user_prompt = (bundle + "\n\n---\n\n"
                        "Explain the code above and return ONLY the JSON report. "

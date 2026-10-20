@@ -58,7 +58,8 @@ The mechanics (inside ``add_parallel``)
     never swallowed is the graph's ``cancel_exc_type`` (Trace passes
     ``InvestigationCancelled``): it is re-raised immediately so Cancel is
     prompt, not delayed behind a 120 s model call.
-3.  **Fan-in (merge).** When every branch has settled, ``merge(state,
+3.  **Fan-in (merge).** When every branch has settled — or hit the per-branch
+    timeout — ``merge(state,
     results, timings)`` runs serialized on the caller thread — the state is
     never mutated from two threads at once. ``results`` maps branch key →
     value (``None`` if that branch failed); ``timings`` maps branch key →
@@ -134,6 +135,7 @@ from __future__ import annotations
 
 import threading
 import time
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -142,6 +144,12 @@ from typing import Any, Callable
 # run cleanly; a node returning ``None`` also ends it (that is a legitimate
 # way to say "this is the last useful thing to do").
 END = "__end__"
+
+# Per-branch wall-clock bound before a branch is recorded as failed. A timed
+# out branch cannot be force-killed (Python threads are not killable), but the
+# node must not wait for it: the pool is abandoned without joining, so a hung
+# branch can at worst outlive the run — it can never stall it.
+_BRANCH_TIMEOUT_S = 180
 
 
 @dataclass
@@ -218,7 +226,10 @@ class Graph:
         ``branches`` map a result key to a callable ``(state) -> value``.
         On a worker error the branch yields ``None`` (fault-isolated) —
         except for ``cancel_exc_type``, which is re-raised so cancellation
-        stays prompt. ``merge(state, results, timings)`` runs serially on
+        stays prompt. Each branch waits at most ``_BRANCH_TIMEOUT_S`` seconds;
+        a branch that overruns is recorded as failed and the pool is abandoned
+        without joining, so a hung branch can outlive the run but never stall
+        it. ``merge(state, results, timings)`` runs serially on
         the caller thread and returns the next node name; ``timings`` maps
         each branch key to its seconds. Timings are also recorded on the
         run trace (``state.run_trace.parallel_timings``), so reports can
@@ -262,38 +273,65 @@ class Graph:
                     run_trace.parallel_timings[name] = dict(timings)
                 return merge(state, results, timings)
 
+            pool_failed = False
+            executor: ThreadPoolExecutor | None
             try:
-                with ThreadPoolExecutor(
-                        max_workers=max(2, min(max_workers, len(keyed))),
-                        thread_name_prefix=f"graph-{name}") as ex:
-                    for key, _fn, fut in [(k, fn, ex.submit(_timed, k, fn))
-                                          for k, fn in keyed]:
+                executor = ThreadPoolExecutor(
+                    max_workers=max(2, min(max_workers, len(keyed))),
+                    thread_name_prefix=f"graph-{name}")
+            except Exception:  # noqa: BLE001 - threads unavailable → fallback
+                executor = None
+                pool_failed = True
+
+            if executor is not None:
+                pool_completed = False
+                try:
+                    futures = [(k, fn, executor.submit(_timed, k, fn))
+                               for k, fn in keyed]
+                    for key, _fn, fut in futures:
                         self._check_cancelled(cancel)
                         try:
-                            results[key] = fut.result(timeout=180)
+                            results[key] = fut.result(timeout=_BRANCH_TIMEOUT_S)
+                        except (FutureTimeoutError, TimeoutError):
+                            # Bound the wait per branch, record the fault, and
+                            # move on — the other branches still deliver.
+                            results[key] = None
+                            fut.cancel()
                         except BaseException as e:  # noqa: BLE001
                             if self._is_cancel(e):
                                 raise
                             results[key] = None
-                    if run_trace is not None:
+                    pool_completed = True
+                except BaseException as e:  # noqa: BLE001
+                    if self._is_cancel(e):
+                        raise
+                    pool_failed = True
+                finally:
+                    if pool_completed and run_trace is not None:
                         run_trace.parallel_fanouts += 1
                         run_trace.parallel_timings[name] = dict(timings)
-            except BaseException as e:  # noqa: BLE001
-                if self._is_cancel(e):
-                    raise
-                if not results:
-                    # Pool could not even start: sequential fallback,
-                    # preserving submission order and the same guarantees.
-                    for key, fn in keyed:
-                        self._check_cancelled(cancel)
-                        try:
-                            results[key] = _timed(key, fn)
-                        except BaseException as be:  # noqa: BLE001
-                            if self._is_cancel(be):
-                                raise
-                            results[key] = None
-                    if run_trace is not None:
-                        run_trace.parallel_timings[name] = dict(timings)
+                    # wait=False: never join a stalled worker. ``cancel_futures``
+                    # revokes anything not yet started; a hung branch may
+                    # outlive the run, but it cannot delay it — or a Cancel.
+                    executor.shutdown(wait=False, cancel_futures=True)
+
+            if pool_failed:
+                # The pool never started (or blew up mid-collection): run any
+                # branch without a recorded result sequentially. Timed-out
+                # branches keep their recorded failure — re-running them could
+                # duplicate subprocess work still in flight.
+                for key, fn in keyed:
+                    if key in results:
+                        continue
+                    self._check_cancelled(cancel)
+                    try:
+                        results[key] = _timed(key, fn)
+                    except BaseException as be:  # noqa: BLE001
+                        if self._is_cancel(be):
+                            raise
+                        results[key] = None
+                if run_trace is not None and not run_trace.parallel_timings.get(name):
+                    run_trace.parallel_timings[name] = dict(timings)
             return merge(state, results, timings)
 
         self._nodes[name] = run_node
