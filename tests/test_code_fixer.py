@@ -77,6 +77,44 @@ class TestApplyDiff(unittest.TestCase):
         self.assertFalse(res.applied)
 
 
+def _replace_line_diff(lineno: int, old: str, new: str) -> str:
+    return (f"--- a/app.py\n+++ b/app.py\n"
+            f"@@ -{lineno},1 +{lineno},1 @@\n-{old}\n+{new}\n")
+
+
+class TestFormatPreservation(unittest.TestCase):
+    """The fixer must not transcode encodings or flip line endings."""
+
+    def test_crlf_and_latin1_bytes_survive(self):
+        tmp, root = _project()
+        self.addCleanup(tmp.cleanup)
+        # "café" in cp1252 bytes (0xe9); NOT valid UTF-8.
+        data = b"caf\xe9 = 1\r\nx = 2\r\nx = 3\r\n"
+        (root / "app.py").write_bytes(data)
+        diff = _replace_line_diff(2, "x = 2", "x = 3")
+        res = apply_unified_diff(root, diff)
+        self.assertTrue(res.applied)
+        out = (root / "app.py").read_bytes()
+        self.assertIn(b"caf\xe9", out,
+                      "non-UTF-8 bytes must round-trip byte-for-byte")
+        self.assertNotIn(b"\xef\xbf\xbd", out,
+                         "no U+FFFD replacement chars may be written")
+        self.assertIn(b"x = 3\r\n", out, "CRLF must stay CRLF")
+        self.assertLessEqual(out.count(b"\n"), out.count(b"\r\n"))
+
+    def test_utf8_bom_survives(self):
+        tmp, root = _project()
+        self.addCleanup(tmp.cleanup)
+        (root / "app.py").write_bytes(b"\xef\xbb\xbfmarker = 1\nx = 2\n")
+        diff = _replace_line_diff(2, "x = 2", "x = 3")
+        res = apply_unified_diff(root, diff)
+        self.assertTrue(res.applied)
+        out = (root / "app.py").read_bytes()
+        self.assertTrue(out.startswith(b"\xef\xbb\xbf"),
+                        "the BOM must be preserved, not dropped or doubled")
+        self.assertIn(b"marker = 1\nx = 3\n", out)
+
+
 class TestEngineAutoFix(unittest.TestCase):
     def test_auto_fix_writes_verified_diff(self):
         tmp, root = _project()
@@ -226,3 +264,4 @@ class TestApplyFixHttp(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

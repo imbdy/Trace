@@ -8,6 +8,10 @@ Safety contract (mirrors project_inspector / validator):
   are applied. Unverified hunks are skipped, never force-applied.
 - Every overwritten file gets a ``<name>.trace-bak`` backup first (unless
   ``create_backup=False``), written atomically (temp file + ``os.replace``).
+- The fixer does not silently transcode files: line endings and encoding of
+  each file are detected and preserved (CRLF stays CRLF; a non-UTF-8 file is
+  round-tripped byte-for-byte via latin-1 instead of being rewritten with
+  U+FFFD replacement characters).
 - ``dry_run=True`` verifies without writing anything.
 - Never raises into the caller: all failures become warnings.
 
@@ -48,11 +52,33 @@ class FixResult:
         }
 
 
+def _read_text(path: Path) -> tuple[list[str], bool, str, str]:
+    """Return (lines, ends_with_newline, line_ending, encoding).
+
+    Preserves the file's own format instead of silently transcoding it:
+    - encoding is UTF-8, UTF-8 with BOM, or (lossless byte round-trip)
+      latin-1 for non-standard-UTF-8 files — never ``errors="replace"``,
+      which permanently turned unknown bytes into U+FFFD on save;
+    - ``line_ending`` is "\n" or "\r\n", detected from the raw bytes, so a
+      CRLF file does not come back with rewritten endings.
+    Never raises (caller handles).
+    """
+    data = path.read_bytes()
+    enc = "utf-8-sig" if data.startswith(b"\xef\xbb\xbf") else "utf-8"
+    try:
+        raw = data.decode(enc)
+    except UnicodeDecodeError:
+        # latin-1 maps every byte; encode->decode round-trips losslessly.
+        enc = "latin-1"
+        raw = data.decode(enc)
+    ends = raw.endswith("\n")
+    return raw.splitlines(), ends, ("\r\n" if b"\r\n" in data else "\n"), enc
+
+
 def _read_lines(path: Path) -> tuple[list[str], bool]:
     """Return (lines, ends_with_newline). Never raises (caller handles)."""
-    raw = path.read_bytes().decode("utf-8", errors="replace")
-    ends = raw.endswith("\n")
-    return raw.splitlines(), ends
+    lines, ends, _eol, _enc = _read_text(path)
+    return lines, ends
 
 
 def _backup_path(path: Path) -> Path:
@@ -180,9 +206,10 @@ def apply_unified_diff(
 
         try:
             if exists:
-                lines, ends_nl = _read_lines(resolved)
+                lines, ends_nl, eol, enc = _read_text(resolved)
             else:
-                lines, ends_nl = [], True
+                # Brand-new file: plain UTF-8, platform-neutral LF.
+                lines, ends_nl, eol, enc = [], True, "\n", "utf-8"
             # Apply bottom-up so earlier line numbers stay valid.
             ordered = sorted(file_hunks,
                              key=lambda h: int(h.get("old_start") or 0),
@@ -198,7 +225,8 @@ def apply_unified_diff(
                     lines[idx:idx] = list(new)
                 else:
                     lines[idx:idx + len(old)] = list(new)
-            text = "\n".join(lines) + ("\n" if (lines and ends_nl) else "")
+            # Re-join with the file's OWN line ending, not a bolted-on LF.
+            text = eol.join(lines) + (eol if (lines and ends_nl) else "")
             if create_backup and exists:
                 bak = _backup_path(resolved)
                 try:
@@ -219,7 +247,9 @@ def apply_unified_diff(
                     continue
             tmp = resolved.parent / (resolved.name + ".trace-tmp")
             try:
-                tmp.write_text(text, encoding="utf-8")
+                # Save in the file's ORIGINAL encoding (and BOM state), so a
+                # fix never silently rewrites a whole file's bytes.
+                tmp.write_bytes(text.encode(enc))
                 os.replace(tmp, resolved)
             finally:
                 try:
