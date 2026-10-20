@@ -45,6 +45,9 @@ from .schemas import (
 # TERMINAL event is always delivered (see _offer) so nobody waits forever.
 TERMINAL_STATUSES = ("done", "error", "cancelled")
 _SUBSCRIBER_QUEUE_MAX = 200
+# Finished investigations kept in memory; older ones live in the history
+# journal (when enabled) and are recallable from there.
+_MAX_FINISHED_JOBS = 100
 
 
 class _Job:
@@ -94,11 +97,27 @@ class InvestigationStore:
         job = _Job(inv_id, request, prior_report)
         with self.lock:
             self.jobs[inv_id] = job
+            self._evict_finished_locked()
         t = threading.Thread(target=self._run, args=(job,), daemon=True,
                              name=f"trace-{inv_id}")
         job.thread = t
         t.start()
         return job
+
+    def _evict_finished_locked(self) -> None:
+        """Cap memory: keep at most _MAX_FINISHED_JOBS finished jobs.
+
+        Requires ``self.lock`` held. Running jobs and jobs with live SSE
+        subscribers are never evicted; older evictees are already recorded in
+        the history journal (when enabled) and remain recallable from there.
+        """
+        surplus = len(self.jobs) - _MAX_FINISHED_JOBS
+        if surplus <= 0:
+            return
+        evictable = [jid for jid, job in self.jobs.items()
+                     if job.status in TERMINAL_STATUSES and not job.subscribers]
+        for jid in evictable[:surplus]:
+            self.jobs.pop(jid, None)
 
     def _offer(self, q: queue.Queue, item, must: bool = False) -> bool:
         """Deliver one item to a subscriber queue without ever blocking.

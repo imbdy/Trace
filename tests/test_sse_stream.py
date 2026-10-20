@@ -22,6 +22,7 @@ from trace_backend.schemas import (
     ProgressEvent,
 )
 from trace_backend.server import (
+    _MAX_FINISHED_JOBS,
     InvestigationStore,
     run_server,
 )
@@ -176,3 +177,49 @@ class TestSSEOverHTTP(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+
+class TestJobEviction(unittest.TestCase):
+    """The job store must not grow unboundedly; finished jobs beyond the cap
+    are evicted (running jobs and subscribed jobs are never evicted)."""
+
+    def test_finished_jobs_are_evicted_at_the_cap(self):
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "pyproject.toml").write_text("[project]\nname='x'\n")
+            engine = ScriptedEngine()
+            engine.gate.set()
+            store = _make_store(td, engine)
+            ids = [store.start(_request(td)).id
+                   for _ in range(_MAX_FINISHED_JOBS + 5)]
+            for _ in range(400):
+                with store.lock:
+                    statuses = {j.status for j in store.jobs.values()}
+                if statuses <= {"done", "error", "cancelled"}:
+                    break
+                time.sleep(0.01)
+            self.assertLessEqual(len(store.jobs), _MAX_FINISHED_JOBS,
+                                 "finished jobs must be evicted beyond the cap")
+            self.assertNotIn(ids[0], store.jobs,
+                             "the oldest finished job must have been evicted")
+            # The newest jobs survive.
+            self.assertIn(ids[-1], store.jobs)
+
+    def test_running_jobs_are_never_evicted(self):
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "pyproject.toml").write_text("[project]\nname='x'\n")
+            engine = ScriptedEngine()  # gated: stays running until set
+            store = _make_store(td, engine)
+            running = store.start(_request(td))
+            for _ in range(_MAX_FINISHED_JOBS + 5):
+                store.start(_request(td))
+            for _ in range(400):
+                with store.lock:
+                    statuses = {j.status for j in store.jobs.values()
+                                if j.id != running.id}
+                if statuses <= {"done", "error", "cancelled"}:
+                    break
+                time.sleep(0.01)
+            self.assertIn(running.id, store.jobs,
+                          "a running job must never be evicted")
+            engine.gate.set()
+            running.thread.join(timeout=5)
