@@ -82,6 +82,43 @@ def _replace_line_diff(lineno: int, old: str, new: str) -> str:
             f"@@ -{lineno},1 +{lineno},1 @@\n-{old}\n+{new}\n")
 
 
+
+def _replace_line_diff(lineno: int, old: str, new: str) -> str:
+    return (f"--- a/app.py\n+++ b/app.py\n"
+            f"@@ -{lineno},1 +{lineno},1 @@\n-{old}\n+{new}\n")
+
+
+class TestBackupRotation(unittest.TestCase):
+    """A second fix must never destroy the backup of the first one."""
+
+    def test_true_original_survives_repeated_fixes(self):
+        tmp, root = _project()
+        self.addCleanup(tmp.cleanup)
+        # LF on purpose: write_bytes guarantees exact line endings,
+        # write_text may translate newlines per platform.
+        (root / "app.py").write_bytes(b"L1\nL2\n")
+        true_original = b"L1\nL2\n"
+
+        res1 = apply_unified_diff(root, _replace_line_diff(2, "L2", "L2 fixed"))
+        self.assertTrue(res1.applied)
+        res2 = apply_unified_diff(root,
+                                  _replace_line_diff(2, "L2 fixed", "L2 fixed again"))
+        self.assertTrue(res2.applied)
+        res3 = apply_unified_diff(root,
+                                  _replace_line_diff(2, "L2 fixed again", "L2 final"))
+        self.assertTrue(res3.applied)
+
+        # .trace-bak-1 holds the true original forever, never clobbered by a
+        # later fix; .trace-bak holds the state right before the last fix.
+        first_bak = root / "app.py.trace-bak-1"
+        self.assertTrue(first_bak.is_file(),
+                        "a repeated fix must rotate the previous backup")
+        self.assertEqual(first_bak.read_bytes(), true_original)
+        self.assertEqual((root / "app.py.trace-bak").read_bytes(),
+                         b"L1\nL2 fixed again\n")
+        self.assertIn("L2 final", (root / "app.py").read_text())
+
+
 class TestFormatPreservation(unittest.TestCase):
     """The fixer must not transcode encodings or flip line endings."""
 
@@ -264,4 +301,6 @@ class TestApplyFixHttp(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
 

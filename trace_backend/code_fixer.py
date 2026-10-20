@@ -8,6 +8,10 @@ Safety contract (mirrors project_inspector / validator):
   are applied. Unverified hunks are skipped, never force-applied.
 - Every overwritten file gets a ``<name>.trace-bak`` backup first (unless
   ``create_backup=False``), written atomically (temp file + ``os.replace``).
+  The backup is never allowed to destroy the true original: before writing
+  an existing ``.trace-bak``, the previous backup is rotated once into
+  ``<name>.trace-bak-1`` (which itself is then permanent), so repeated fixes
+  keep both the previous version AND the file's very first backed-up state.
 - The fixer does not silently transcode files: line endings and encoding of
   each file are detected and preserved (CRLF stays CRLF; a non-UTF-8 file is
   round-tripped byte-for-byte via latin-1 instead of being rewritten with
@@ -83,6 +87,23 @@ def _read_lines(path: Path) -> tuple[list[str], bool]:
 
 def _backup_path(path: Path) -> Path:
     return path.parent / (path.name + ".trace-bak")
+
+
+def _rotate_backup_once(bak: Path) -> None:
+    """Preserve the true original across repeated fixes.
+
+    ``<name>.trace-bak`` is the file's state as of the MOST RECENT fix. The
+    very first backup ever taken is moved into ``<name>.trace-bak-1`` and
+    that slot is never overwritten afterwards, so the original survives any
+    number of later fix/undo cycles. Best effort: rotation failure only
+    means the current backup is overwritten (previous behaviour).
+    """
+    prev = Path(str(bak) + "-1")
+    try:
+        if bak.exists() and not prev.exists():
+            os.replace(bak, prev)
+    except OSError:
+        pass  # rotation is best-effort; the overwrite below still works
 
 
 def apply_unified_diff(
@@ -230,6 +251,7 @@ def apply_unified_diff(
             if create_backup and exists:
                 bak = _backup_path(resolved)
                 try:
+                    _rotate_backup_once(bak)
                     bak.write_bytes(resolved.read_bytes())
                     res.backup_paths.append(str(bak))
                 except OSError as e:
