@@ -204,6 +204,32 @@ class TestEngine(unittest.TestCase):
         self.assertFalse(Path(fd_path).exists())
         self.assertIsNone(r.temp_path)
 
+    def test_intelligence_and_test_note_are_redacted_before_the_model(self):
+        """Search-hit snippets and test-runner output are raw disk text; they
+        must pass the same redaction gate as the rest of the bundle."""
+        engine, ollama = self._engine()
+        intel = ("SEARCH HITS:\n"
+                 "hit [api_key] app.py:2: API_KEY = 'sk-abcdef1234567890'")
+        test_note = ("TESTS (pytest): \n"
+                     "FAILED app.py::boom - bearer ghp_0123456789abcdef0123")
+        req = InvestigationRequest(
+            request_text="AttributeError in app.py",
+            project_dir=str(self.root), include_screenshot=False,
+            run_tests=True)
+        with mock.patch.object(eng_mod, "collect_diagnostics", return_value=[]), \
+                mock.patch.object(eng_mod, "_gather_intelligence",
+                                  return_value=intel), \
+                mock.patch.object(eng_mod, "run_project_tests",
+                                  return_value={"ran": True,
+                                                "command": ["pytest"],
+                                                "reason": "",
+                                                "output": test_note}):
+            engine.investigate(req)
+        prompt = ollama.last_messages[-1]["content"]
+        self.assertNotIn("sk-abcdef1234567890", prompt)
+        self.assertNotIn("ghp_0123456789abcdef0123", prompt)
+        self.assertIn("REDACTED", prompt)
+
     def test_evidence_summary_records_graph_trace(self):
         """The agent graph's visited path is visible in the evidence —
         transparency about how the verdict was produced."""

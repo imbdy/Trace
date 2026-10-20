@@ -135,10 +135,19 @@
     finish(status, invId, title) {
       if (invId) ensureInv(invId, title);
       if (!st.invId) return;
-      st.settled = status !== 'cancelled';
-      st.phaseStep = status === 'cancelled' ? null : 'report';
-      if (status === 'cancelled') st.reached = {};
-      if (el.livePhase) el.livePhase.textContent = status === 'cancelled' ? 'stopped' : status;
+      // Only a completed run settles the report step; a failed one keeps the
+      // rail honest (steps reached stay lit, report stays unticked/grey).
+      st.settled = status === 'done';
+      if (status === 'done') {
+        st.phaseStep = 'report';
+      } else {
+        st.phaseStep = null;
+        if (status !== 'error') st.reached = {};
+      }
+      if (el.livePhase) {
+        el.livePhase.textContent =
+          status === 'cancelled' ? 'stopped' : status === 'error' ? 'error' : 'done';
+      }
       hideVerdict();
       renderStitch();
     },

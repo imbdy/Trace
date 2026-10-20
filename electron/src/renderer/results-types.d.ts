@@ -38,8 +38,8 @@ interface RendererStatus {
 interface TraceWindowBridge {
   openFile: (path: string, line?: number) => Promise<Record<string, unknown>>;
   applyFix: (id: string, dryRun?: boolean) => Promise<Record<string, unknown>>;
-  followUp: (parentId: string, text: string) => Promise<{ ok: boolean; reason?: string }>;
-  history: (query?: string) => Promise<Record<string, unknown>[]>;
+  followUp: (parentId: string, text: string) => Promise<{ ok: boolean; id?: string; reason?: string }>;
+  history: (query?: string) => Promise<Record<string, unknown>[] | null>;
   showHistory: (id: string) => Promise<{ ok: boolean; reason?: string }>;
   onReport: (cb: (status: unknown) => void) => void;
 }

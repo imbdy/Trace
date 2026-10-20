@@ -1,8 +1,11 @@
 """Tests: the agent-graph runtime (nodes, routing, fan-out, guards)."""
 
 import threading
+import time
 import unittest
+from unittest import mock
 
+from trace_backend import agent_graph
 from trace_backend.agent_graph import END, Graph, GraphRun
 
 class _State:
@@ -195,6 +198,64 @@ class TestParallelFanOut(unittest.TestCase):
         self.assertGreaterEqual(seen["only"], 0.0)
         # A single branch is not a fan-out.
         self.assertEqual(trace.parallel_fanouts, 0)
+
+
+    def test_timed_out_branch_does_not_stall_the_node(self):
+        """A branch overrunning the per-branch bound is recorded as failed and
+        the node proceeds — the run never waits for a hung worker."""
+        g = Graph("timeout", cancel_exc_type=KeyboardInterrupt)
+        fin = threading.Event()
+
+        def hang(state):
+            time.sleep(2.0)
+            fin.set()
+            return "late"
+
+        def quick(state):
+            return "done"
+
+        def merge(state, results, timings):
+            state.value.append(results)
+            return END
+
+        g.add_parallel("joint", {"hang": hang, "quick": quick}, merge=merge)
+        s = _State()
+        with mock.patch.object(agent_graph, "_BRANCH_TIMEOUT_S", 0.2):
+            t0 = time.perf_counter()
+            g.run(s, "joint")
+            elapsed = time.perf_counter() - t0
+        self.assertLess(elapsed, 1.0, "node must not wait for the hung branch")
+        self.assertIsNone(s.value[0]["hang"])
+        self.assertEqual(s.value[0]["quick"], "done")
+        # The abandoned worker still finishes; never leave it dangling past
+        # the test (the process-kill atexit join would reveal it anyway).
+        self.assertTrue(fin.wait(5.0))
+
+    def test_pool_start_failure_runs_branches_sequentially(self):
+        """No threads available → sequential fallback, same results, same
+        submission order."""
+        g = Graph("noseq", cancel_exc_type=KeyboardInterrupt)
+        order: list[str] = []
+
+        def a(state):
+            order.append("a")
+            return "A"
+
+        def b(state):
+            order.append("b")
+            return "B"
+
+        def merge(state, results, timings):
+            state.value.append(results)
+            return END
+
+        g.add_parallel("joint", {"a": a, "b": b}, merge=merge)
+        s = _State()
+        with mock.patch.object(agent_graph, "ThreadPoolExecutor",
+                               side_effect=RuntimeError("no threads")):
+            g.run(s, "joint")
+        self.assertEqual(s.value[0], {"a": "A", "b": "B"})
+        self.assertEqual(order, ["a", "b"])
 
 
 class TestIntrospection(unittest.TestCase):
