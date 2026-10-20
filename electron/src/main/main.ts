@@ -299,6 +299,19 @@ function setupAutoUpdates(): void {
 }
 
 function emitStage(ev: { investigation_id?: string; stage: string; message: string; progress: number }): void {
+  // The latest visible stage doubles as an IN-FLIGHT status so "Open results"
+  // during a run shows the running investigation (its current stage) instead
+  // of stale last-run data. Only superseded by the real final status.
+  if (ev.investigation_id && run && run.id === ev.investigation_id) {
+    lastStatus = {
+      investigation_id: ev.investigation_id,
+      status: "running",
+      progress: ev.progress,
+      stage: ev.stage,
+      report: null,
+      error: null,
+    };
+  }
   try {
     charWin?.webContents.send("trace:stage", ev);
   } catch {
@@ -325,13 +338,52 @@ function errorStatus(investigationId: string, shaped: { message: string; code: s
   };
 }
 
+// A transient loopback/backend blip while streaming must not pretend the run
+// died, nor leave the backend burning model time unheard: re-open the event
+// stream (the backend replays the full history), a bounded number of times;
+// only give up and cancel the run after the reattach budget is exhausted.
+const STREAM_REATTACH_MAX = 2;
+
 // Streams one running investigation to the character window, then lands the
 // final status (notifications + results window + both-report broadcast).
 async function streamRun(id: string, abort: AbortController, autoFix: boolean): Promise<void> {
+  let reattach = 0;
   try {
-    for await (const ev of api.events(id, abort.signal)) {
-      const e = ev as ProgressEvent;
-      emitStage({ investigation_id: id, stage: e.stage, message: e.message, progress: e.progress });
+    while (true) {
+      try {
+        for await (const ev of api.events(id, abort.signal)) {
+          reattach = 0; // a healthy chunk of events resets the retry budget
+          const e = ev as ProgressEvent;
+          emitStage({ investigation_id: id, stage: e.stage, message: e.message, progress: e.progress });
+        }
+        break;
+      } catch (streamErr) {
+        if ((streamErr as Error).name === "AbortError") throw streamErr;
+        // Give a status attempt one shot: if the run is terminal already, the
+        // landing path below can still finish the story honestly.
+        let terminal = false;
+        try {
+          const probe = await api.getStatus(id);
+          if (probe.status !== "running") {
+            terminal = true;
+          } else {
+            emitStage({ investigation_id: id, stage: probe.stage ?? "receive", message: "Reconnecting…", progress: probe.progress });
+          }
+        } catch {
+          /* status probe failed too — still try the bounded reattach */
+        }
+        if (terminal) break;
+        if (reattach >= STREAM_REATTACH_MAX) {
+          // No one can hear this run finish — stop it honestly, then surface.
+          try { await api.cancel(id); } catch { /* ignore */ }
+          throw streamErr;
+        }
+        reattach++;
+        await new Promise((r) => setTimeout(r, 500 * reattach)); // gentle backoff
+        if (abort.signal.aborted) {
+          throw Object.assign(new Error("cancelled"), { name: "AbortError" });
+        }
+      }
     }
     if (abort.signal.aborted) {
       emitStage({ investigation_id: id, stage: "cancelled", message: "Cancelled.", progress: 0 });
@@ -429,7 +481,9 @@ async function runInvestigation(text: string, opts: Record<string, unknown>, fol
     }
     const shaped = shapeRunError(e);
     emitStage({ stage: "error", message: shaped.message.slice(0, 300), progress: 0 });
-    const st = errorStatus(run?.id ?? "", shaped);
+    // run is already nulled on entry to this catch; the failed attempt has
+    // no id yet, so the status honestly carries the empty id placeholder.
+    const st = errorStatus("", shaped);
     lastStatus = st;
     showResults(st);
     return null;
