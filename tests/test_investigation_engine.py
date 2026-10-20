@@ -196,6 +196,36 @@ class TestEngine(unittest.TestCase):
         self.assertFalse(os.path.exists(fd_path), "temp screenshot must be deleted")
         self.assertIsNone(shot.temp_path)
 
+    def test_screenshot_temp_file_disposed_when_merge_never_runs(self):
+        """Cancel landing between capture and merge used to leak the temp
+        screenshot file: dispose must still happen via the pending record."""
+        import os
+        png = (b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        fd_path = str(self.root / "shot2.png")
+        with open(fd_path, "wb") as f:
+            f.write(png)
+        shot = ScreenshotResult(width=10, height=10, source="test",
+                                png_bytes=png, temp_path=fd_path)
+        engine, _ = self._engine()
+        req = InvestigationRequest(request_text="x", project_dir=str(self.root),
+                                   include_screenshot=True)
+        cancel = threading.Event()
+
+        def capture_and_cancel(*a, **kw):
+            # Cancel fires while the parallel capture is still in flight, so
+            # the merge never runs — exactly the old leak window.
+            cancel.set()
+            return shot
+
+        with mock.patch.object(eng_mod, "capture_screenshot",
+                               side_effect=capture_and_cancel), \
+             mock.patch.object(eng_mod, "collect_diagnostics", return_value=[]):
+            with self.assertRaises(InvestigationCancelled):
+                engine.investigate(req, cancel_event=cancel)
+        self.assertFalse(os.path.exists(fd_path),
+                         "pending capture must be disposed even when the "
+                         "merge never runs")
+
     def test_dispose_removes_file(self):
         fd_path = str(self.root / "t.png")
         Path(fd_path).write_bytes(b"data")
