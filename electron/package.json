@@ -1,6 +1,6 @@
 {
   "name": "trace-desktop",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "private": true,
   "author": "imbdy",
   "description": "Trace independent debugging companion (Electron frontend, Python backend)",
@@ -20,10 +20,11 @@
     "electron-builder": "^26.0.12",
     "typescript": "^5.6.0"
   },
-  "build": {
+    "build": {
     "appId": "Trace.Trace",
     "productName": "Trace",
     "artifactName": "Trace-Setup-${version}.${ext}",
+    "releaseNotesFile": "../RELEASE_NOTES.md",
     "publish": {
       "provider": "github",
       "owner": "imbdy",

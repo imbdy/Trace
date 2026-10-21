@@ -3,6 +3,24 @@
 All notable changes to Trace. Versions follow the release commit messages.
 Dates are UTC.
 
+## 0.4.2 — 2026-10-21
+
+- Race-free SSE delivery (atomic subscribe, guaranteed terminal event),
+  mid-run reconnects with status probing and a retry budget, and a
+  100-job cap on the in-memory store.
+- Honest model output: excerpt sizes are hard-capped, shape-wrong JSON
+  now triggers the repair loop, and boolean/type coercion cannot be
+  fooled by strings.
+- The fixer preserves encoding and line endings; the backup rotates once
+  so repeated fixes never overwrite the true original.
+- Results window hardens its CSP and states when the verdict was issued
+  (provenance stamp).
+- Trust surface: WAI-ARIA tabs, copies that preserve evidence context
+  (location + excerpt, evidence + source, raw diff), focus rings,
+  debounced history search, and screen-reader labels/live regions.
+- The character window opens from the keyboard; a cancelled screenshot
+  capture always disposes its pending image.
+
 ## 0.2.2 — 2026-10-20
 
 - Redacted `code intelligence` and test-runner output before the model call,
