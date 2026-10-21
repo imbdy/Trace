@@ -24,7 +24,9 @@
     "appId": "Trace.Trace",
     "productName": "Trace",
     "artifactName": "Trace-Setup-${version}.${ext}",
-    "releaseNotesFile": "../RELEASE_NOTES.md",
+    "releaseInfo": {
+      "releaseNotesFile": "../RELEASE_NOTES.md"
+    },
     "publish": {
       "provider": "github",
       "owner": "imbdy",
