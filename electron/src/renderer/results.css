@@ -203,6 +203,16 @@ p, .card, li { -webkit-user-select: text; user-select: text; }
 .follow-note.error { color: var(--red); }
 .gitctx { color: var(--muted); font-size: 12px; margin: 8px 0 0; font-family: Consolas, monospace; }
 
+/* ---- keyboard visibility ----
+   Pointer users get hover, keyboard users need an equivalent: a visible ring
+   that never fights the reference ring on inputs. */
+.tab:focus-visible, .open-btn:focus-visible, .copy-btn:focus-visible,
+.history-item:focus-visible, .follow-send:focus-visible,
+.verdict-open:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.link:focus-visible, .history-search:focus-visible { outline-offset: 2px; }
+
 @media (max-width: 620px) { .follow-row { flex-direction: column; } .follow-send { min-height: 40px; } }
 @media (prefers-reduced-motion: reduce) {
   #root, .banner, .tabpanel.active, .skeleton .sk { animation: none; }
