@@ -84,6 +84,49 @@
     api._settle = null;
   }
 
+  function syncFaceOpen() {
+    if (!wrap) return;
+    try {
+      wrap.setAttribute('aria-expanded', Sh.open ? 'true' : 'false');
+      wrap.setAttribute('aria-label', Sh.open ? 'Trace — workspace open' : 'Trace — open workspace');
+    } catch (e) {}
+  }
+
+  function expand() {
+    if (!Sh.open) {
+      Sh.open = true;
+      var h0 = 0;
+      try { h0 = Math.ceil(sill.getBoundingClientRect().height + SHADOW_PAD); } catch (e0) {}
+      if (leafEl) { leafEl.classList.add('open'); }
+      if (leafBodyEl) { leafBodyEl.setAttribute('aria-hidden', 'false'); }
+      syncFaceOpen();
+      if (H) { try { H.wake(); } catch (e) {} }
+      try { if (window.trace && window.trace.resize) window.trace.resize(OPEN_W, h0 || 198); } catch (e2) {}
+      var ask = document.getElementById('ask-text');
+      if (ask) { try { ask.focus({ preventScroll: true }); } catch (e3) {} }
+      requestFitSettled();
+    }
+  }
+
+  function collapse(fromKbd) {
+    if (Sh.open) {
+      Sh.open = false;
+      if (leafEl) { leafEl.classList.remove('open'); }
+      if (leafBodyEl) { leafBodyEl.setAttribute('aria-hidden', 'true'); }
+      syncFaceOpen();
+      // Esc is a keyboard close: hand focus back to the face so the next
+      // Tab keypress re-enters from the top instead of vanishing off-window.
+      if (fromKbd && wrap && leafEl &&
+          leafEl.contains(document.activeElement) && document.activeElement !== wrap) {
+        try { wrap.focus({ preventScroll: true }); } catch (e0) {}
+      }
+      try {
+        var r = sill.getBoundingClientRect(); // reflowed: workspace hidden again
+        if (window.trace && window.trace.resize) window.trace.resize(CLOSED_W, Math.ceil(r.height + SHADOW_PAD));
+      } catch (e) {}
+    }
+  }
+
   var api = {
     idle(msg) {
       // A success/error performance owns a few seconds of stage: stray
@@ -131,31 +174,8 @@
       if (Sh.open) api.collapse();
       else api.expand();
     },
-    expand() {
-      if (!Sh.open) {
-        Sh.open = true;
-        var h0 = 0;
-        try { h0 = Math.ceil(sill.getBoundingClientRect().height + SHADOW_PAD); } catch (e0) {}
-        if (leafEl) { leafEl.classList.add('open'); }
-        if (leafBodyEl) { leafBodyEl.setAttribute('aria-hidden', 'false'); }
-        if (H) { try { H.wake(); } catch (e) {} }
-        try { if (window.trace && window.trace.resize) window.trace.resize(OPEN_W, h0 || 198); } catch (e2) {}
-        var ask = document.getElementById('ask-text');
-        if (ask) { try { ask.focus({ preventScroll: true }); } catch (e3) {} }
-        requestFitSettled();
-      }
-    },
-    collapse() {
-      if (Sh.open) {
-        Sh.open = false;
-        if (leafEl) { leafEl.classList.remove('open'); }
-        if (leafBodyEl) { leafBodyEl.setAttribute('aria-hidden', 'true'); }
-        try {
-          var r = sill.getBoundingClientRect(); // reflowed: workspace hidden again
-          if (window.trace && window.trace.resize) window.trace.resize(CLOSED_W, Math.ceil(r.height + SHADOW_PAD));
-        } catch (e) {}
-      }
-    },
+    expand: expand,
+    collapse: collapse,
     _settle: null,
   };
   window.TraceShell = api;
@@ -183,6 +203,14 @@
   wrap.addEventListener('click', function (e) {
     if (e.detail > 1) return;
     if (!Sh.open) api.expand(); // pressing the face opens the workspace
+  });
+  // Keyboard parity for the face: it is role="button", and since it is a div
+  // (not a real <button>) Enter/Space never become clicks on their own.
+  wrap.addEventListener('keydown', function (e) {
+    if ((e.key === 'Enter' || e.key === ' ') && !Sh.open) {
+      e.preventDefault();
+      api.expand();
+    }
   });
   // The whole collapsed shell opens the workspace: face, title, anywhere on
   // the card. Interactive children (buttons, input) are excluded so typing
@@ -286,7 +314,7 @@
   }
 
   window.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape') { api.collapse(); }
+    if (e.key === 'Escape') { api.collapse(true); }
   });
 
   // boot: settle the window to the perch and greet.

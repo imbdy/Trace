@@ -146,6 +146,7 @@ html, body {
 #leaf-fold:hover { background: rgba(159, 184, 255, 0.2); color: #fff; }
 #leaf-fold:active { transform: scale(0.94); }
 #leaf-fold:focus-visible { outline: 2px solid #8faeff; outline-offset: 2px; }
+#hearth-wrap:focus-visible { outline: 2px solid #8faeff; outline-offset: 2px; border-radius: 24px; }
 #leaf-sub {
   font-size: 12px; line-height: 1.4; color: rgba(233, 236, 241, 0.66); margin-top: 3px;
   max-width: 100%; overflow-wrap: anywhere; display: -webkit-box;
