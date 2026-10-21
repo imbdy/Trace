@@ -169,6 +169,17 @@ pre.code .dl.hunk { color: var(--accent); }
 .copy-btn:active:not(:disabled) { transform: scale(0.96); }
 .copy-btn:disabled { opacity: 0.4; cursor: default; }
 .copy-box pre.code { margin: 0; border: 0; border-radius: 0; box-shadow: none; }
+/* Small inline copy affordance (finding evidence rows). */
+.copy-btn.copy-mini { padding: 3px 10px; font-size: 11px; border-color: rgba(157,185,255,.25); }
+.evlabel-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 10px 0 2px; }
+.evlabel-row .evlabel { margin: 0; }
+/* Evidence keeps traceback line breaks; wrapped prose stays readable. */
+pre.evtext {
+  margin: 4px 0 0; padding: 9px 11px; border-radius: 9px;
+  background: var(--code); border: 1px solid var(--line);
+  font-family: Consolas, monospace; font-size: 12.5px; line-height: 1.5;
+  white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg);
+}
 
 /* ---- lists ---- */
 ul.tight { margin: 6px 0; padding-left: 22px; }
