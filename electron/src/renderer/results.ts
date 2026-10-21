@@ -226,23 +226,42 @@ function fixedLines(diff: string): string {
   return added || diff.trim();
 }
 
-function copyBox(code: string): HTMLElement {
-  const box = el("div", "copy-box");
-  const bar = el("div", "copy-bar");
-  bar.appendChild(el("span", "copy-label", "Fixed lines"));
-  const button = el("button", "copy-btn", "Copy") as HTMLButtonElement;
-  button.addEventListener("click", async () => {
+// Copy button for the trust surface. Follows the evidence-copy contract:
+// copied text PRESERVES its provenance context (where a finding came from),
+// and the honest fallback never pretends a copy succeeded.
+function copyButton(getText: () => string, small = false): HTMLButtonElement {
+  const b = el("button", small ? "copy-btn copy-mini" : "copy-btn", "Copy") as HTMLButtonElement;
+  b.addEventListener("click", async () => {
     try {
-      await navigator.clipboard.writeText(code);
-      button.textContent = "Copied";
-      setTimeout(() => { button.textContent = "Copy"; }, 1400);
+      await navigator.clipboard.writeText(getText());
+      b.textContent = "Copied";
+      setTimeout(() => { b.textContent = "Copy"; }, 1400);
     } catch {
-      button.textContent = "Select and copy";
+      b.textContent = "Select and copy";
     }
   });
-  bar.appendChild(button);
-  box.append(bar, codeBlock(code));
+  return b;
+}
+
+// A labelled block whose Copy button carries context into the clipboard.
+function factBox(barLabel: string, node: HTMLElement, getText: () => string): HTMLElement {
+  const box = el("div", "copy-box");
+  const bar = el("div", "copy-bar");
+  bar.appendChild(el("span", "copy-label", barLabel));
+  bar.appendChild(copyButton(getText));
+  box.append(bar, node);
   return box;
+}
+
+function copyBox(code: string): HTMLElement {
+  return factBox("Fixed lines", codeBlock(code), () => code);
+}
+
+// Finding excerpts copy WITH their location line — a snippet pasted into a
+// report or chat proof without "where it came from" is not evidence.
+function excerptBox(location: string, code: string): HTMLElement {
+  return factBox(`Excerpt — ${location}`, codeBlock(code),
+    () => `${location}\n${code}`);
 }
 
 function applyBox(invId: string, verified: boolean): HTMLElement {
@@ -302,11 +321,17 @@ function findingCard(f: RendererFinding): HTMLElement {
           : "No code excerpt was returned for this location."}`);
   card.appendChild(note);
   if (f.explanation) card.appendChild(el("p", "", f.explanation));
-  if (f.code_excerpt) card.appendChild(codeBlock(f.code_excerpt));
+  if (f.code_excerpt) card.appendChild(excerptBox(locationLabel(f), f.code_excerpt));
   else if (f.verified) card.appendChild(el("p", "note warn", "Excerpt unavailable."));
   if (f.evidence) {
-    card.appendChild(el("p", "evlabel", "Evidence"));
-    card.appendChild(el("p", "", f.evidence));
+    // Evidence copies back to the clipboard with its source location —
+    // a pasted traceback is only useful next to where it came from.
+    const evrow = el("div", "evlabel-row");
+    evrow.appendChild(el("p", "evlabel", "Evidence"));
+    evrow.appendChild(copyButton(
+      () => `Evidence — ${locationLabel(f)}\n${f.evidence}`, true));
+    card.appendChild(evrow);
+    card.appendChild(el("pre", "evtext", f.evidence));
   }
   if (f.git_context) card.appendChild(el("p", "gitctx", f.git_context));
   return card;
@@ -348,19 +373,56 @@ function skeleton(): void {
   mount.appendChild(s);
 }
 
+// Tab bar per the WAI-ARIA Tabs pattern (minus noise we cannot honestly
+// provide): roving tabindex, Left/Right/Home/End cycling, and because every
+// panel is already in the DOM (zero-latency document switching), focus
+// follows the pattern's "automatic activation" recommendation.
 function tabbar(tabs: [string, string][], onPick: (id: string) => void): HTMLElement {
   const bar = el("nav", "tabbar");
   bar.setAttribute("data-section", "tabs");
   bar.setAttribute("role", "tablist");
+  bar.setAttribute("aria-label", "Result sections");
+  const buttons: Record<string, HTMLButtonElement> = {};
+  const order = tabs.map(([id]) => id);
   for (const [id, label] of tabs) {
     const b = el("button", "tab" + (id === activeTab ? " active" : ""), label) as HTMLButtonElement;
     b.setAttribute("role", "tab");
-    if (id === activeTab) b.setAttribute("aria-selected", "true");
+    b.id = `tab-${id}`;
+    b.setAttribute("aria-controls", `panel-${id}`);
+    b.setAttribute("aria-selected", id === activeTab ? "true" : "false");
+    b.tabIndex = id === activeTab ? 0 : -1;
     b.addEventListener("click", () => onPick(id));
     (b as HTMLButtonElement & { dataset: DOMStringMap }).dataset.tab = id;
+    buttons[id] = b;
     bar.appendChild(b);
   }
+  bar.addEventListener("keydown", (e) => {
+    const k = e.key;
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(k)) return;
+    const cur = document.activeElement as HTMLElement | null;
+    if (!cur || !cur.dataset || cur.dataset.tab === undefined) return;
+    e.preventDefault();
+    let idx = order.indexOf(cur.dataset.tab);
+    if (idx < 0) idx = 0;
+    if (k === "ArrowRight") idx = (idx + 1) % order.length;
+    else if (k === "ArrowLeft") idx = (idx - 1 + order.length) % order.length;
+    else if (k === "Home") idx = 0;
+    else idx = order.length - 1;
+    buttons[order[idx]].focus();
+    onPick(order[idx]);
+  });
   return bar;
+}
+
+// The panel side of the same pattern: ids + aria-labelledby + a tabindex so
+// keyboard users land (and scroll) inside long evidence panels.
+function panelSection(active: boolean, id: string): HTMLElement {
+  const s = el("section", "tabpanel" + (active ? " active" : ""));
+  s.setAttribute("role", "tabpanel");
+  s.id = `panel-${id}`;
+  s.setAttribute("aria-labelledby", `tab-${id}`);
+  s.tabIndex = 0;
+  return s;
 }
 
 function followUpBox(parentId: string): void {
@@ -456,8 +518,10 @@ function render(status: RendererStatus): void {
       const btn = root.querySelector(`[data-tab="${tid}"]`);
       if (btn) {
         btn.classList.toggle("active", on);
-        if (on) btn.setAttribute("aria-selected", "true");
-        else btn.removeAttribute("aria-selected");
+        // APG Tabs: aria-selected is a boolean attribute on every tab —
+        // explicit false rather than absent on inactive tabs.
+        btn.setAttribute("aria-selected", on ? "true" : "false");
+        (btn as HTMLElement).tabIndex = on ? 0 : -1;
       }
     }
   };
@@ -465,7 +529,7 @@ function render(status: RendererStatus): void {
 
   const isExplain = String(status.investigation_type || "debug") === "explain";
   // --- Answer tab: the verdict up front ---
-  const answer = el("section", "tabpanel" + (activeTab === "answer" ? " active" : ""));
+  const answer = panelSection(activeTab === "answer", "answer");
   panels.answer = answer; root.appendChild(answer); mount = answer;
   h1("Quick answer");
   mount.appendChild(el("p", `badge ${r.confidence}`, `confidence: ${r.confidence}`));
@@ -486,7 +550,7 @@ function render(status: RendererStatus): void {
   if (activeInvestigation) followUpBox(activeInvestigation);
 
   // --- Code & Diff tab: full investigation depth ---
-  const code = el("section", "tabpanel" + (activeTab === "code" ? " active" : ""));
+  const code = panelSection(activeTab === "code", "code");
   panels.code = code; root.appendChild(code); mount = code;
   h1(isExplain ? "Overview" : "Diagnosis");
   para(r.summary || "No summary provided.");
@@ -504,14 +568,19 @@ function render(status: RendererStatus): void {
   }
   if (fix?.diff) {
     h2(fix.diff_verified ? "Proposed patch (verified — safe to apply)" : "Proposed patch (unverified — review only)");
-    mount.appendChild(diffBlock(fix.diff));
+    // The unified diff is self-contained provenance (paths + hunks), so its
+    // Copy button can hand over the raw text untouched.
+    const rawDiff: string = fix.diff;
+    mount.appendChild(factBox(
+      fix.diff_verified ? "Full diff (verified)" : "Full diff (unverified)",
+      diffBlock(rawDiff), () => rawDiff));
     mount.appendChild(applyBox(activeInvestigation, fix.diff_verified === true));
   }
   if (fix?.rationale) para(fix.rationale);
   if (r.alternative_hypotheses?.length) { h2("Alternative hypotheses"); mount.appendChild(bulletList(r.alternative_hypotheses)); }
 
   // --- Evidence tab: everything behind the verdict ---
-  const ev = el("section", "tabpanel" + (activeTab === "evidence" ? " active" : ""));
+  const ev = panelSection(activeTab === "evidence", "evidence");
   panels.evidence = ev; root.appendChild(ev); mount = ev;
   h1("Investigation evidence");
   if (r.evidence_summary) para(r.evidence_summary);
