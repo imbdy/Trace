@@ -24,6 +24,8 @@ interface RendererReport {
   alternative_hypotheses: string[]; needs_more_info: string[];
   evidence_summary: string; warnings: string[];
   fix_applied?: RendererFixApplied | null;
+  // Provenance: when the verdict was issued (contract = seconds epoch).
+  created_at?: number | string | null;
 }
 interface RendererStatus {
   investigation_id: string;
