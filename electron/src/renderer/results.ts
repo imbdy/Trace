@@ -16,8 +16,19 @@ function appHeader(status: RendererStatus): HTMLElement {
   const header = el("header", "app-header");
   header.setAttribute("data-section", "header");
   const brand = el("div", "brand");
-  brand.append(el("span", "brand-mark", "✦"), el("span", "brand-name", "Trace"),
-    el("span", "brand-sub", status.investigation_id || ""));
+  // Provenance: WHEN was this verdict issued. The contract stores seconds;
+  // a stray ms value is clamped instead of rendering a year-50000 date.
+  let stamp = "";
+  const tsRaw = status.report?.created_at;
+  const ts = typeof tsRaw === "number"
+    ? (tsRaw > 1e12 ? tsRaw : tsRaw * 1000) : NaN;
+  if (status.status === "done" && Number.isFinite(ts)) {
+    const d = new Date(ts);
+    stamp = ` · Diagnosed ${d.toLocaleString()}`;
+  }
+  const sub = el("span", "brand-sub", (status.investigation_id || "") + stamp);
+  if (Number.isFinite(ts)) sub.title = `Issued ${new Date(ts).toISOString()} (UTC)`;
+  brand.append(el("span", "brand-mark", "✦"), el("span", "brand-name", "Trace"), sub);
   const state = status.status === "done" ? "Ready" : status.status === "running" ? "Working" : "Needs attention";
   const mode = String(status.investigation_type || "debug") === "explain" ? "Explain" : "Debug";
   header.append(brand,
@@ -144,6 +155,9 @@ function normalizeStatus(raw: unknown): RendererStatus {
       evidence_summary: asString(r.evidence_summary),
       warnings: asStringList(r.warnings),
       fix_applied: appliedRaw,
+      created_at: typeof r.created_at === "number"
+        ? r.created_at
+        : asString(r.created_at) || null,
     };
   }
   return {
