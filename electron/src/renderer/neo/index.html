@@ -27,7 +27,7 @@
             <span id="leaf-glow"></span>
             <span id="leaf-title">Trace</span>
           </div>
-          <div id="leaf-sub">ready to debug</div>
+          <div id="leaf-sub" aria-live="polite">ready to debug</div>
         </div>
         <div id="face-btns">
           <button id="leaf-fold" type="button" title="fold the panel (esc)">fold</button>
@@ -48,7 +48,7 @@
           <label class="mode-btn"><input type="radio" name="investigation_type" value="explain"> Explain</label>
         </div>
         <div id="live" hidden>
-          <div id="live-title-row"><span id="live-title">Investigation</span><span id="live-phase">—</span></div>
+          <div id="live-title-row"><span id="live-title">Investigation</span><span id="live-phase" aria-live="polite">—</span></div>
           <div id="stitch">
             <span class="st" data-s="capture">capture</span><i>→</i>
             <span class="st" data-s="inspect">inspect</span><i>→</i>
@@ -58,7 +58,7 @@
           </div>
           <div id="live-log"></div>
           <div id="verdict" hidden>
-            <div id="verdict-line"></div>
+            <div id="verdict-line" aria-live="polite"></div>
             <button id="verdict-open" type="button">Open results</button>
           </div>
         </div>
