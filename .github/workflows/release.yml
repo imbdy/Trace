@@ -35,3 +35,16 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run dist:win:publish
+      - name: Put the release notes on the release page
+        # electron-builder ships releaseInfo into latest.yml (auto-update
+        # "what's new") but not always into the release page body; the page
+        # deserves the same notes, so patch it under the pushed tag.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json" }
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME" -Headers $headers
+          $body = Get-Content RELEASE_NOTES.md -Raw
+          $payload = @{ body = $body } | ConvertTo-Json
+          Invoke-RestMethod -Method Patch -Uri $release.url -Headers $headers -Body ([System.Text.Encoding]::UTF8.GetBytes($payload)) -ContentType "application/json; charset=utf-8" | Out-Null
+          Write-Output "Release body set for $env:GITHUB_REF_NAME"
