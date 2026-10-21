@@ -127,9 +127,12 @@
     verdict(line, invId, title) {
       if (invId) ensureInv(invId, title);
       if (!st.invId) return;
+      // Unhide FIRST, then set text: the verdict line is aria-live=polite, so
+      // screen readers announce content that lands in a visible region —
+      // filling text before it is revealed can be silently swallowed.
+      if (el.verdict) el.verdict.hidden = false;
       if (el.verdictLine) el.verdictLine.textContent = concise(line || 'The investigation finished.', 160);
       if (el.livePhase) el.livePhase.textContent = 'done';
-      if (el.verdict) el.verdict.hidden = false;
       showLive();
     },
     finish(status, invId, title) {
