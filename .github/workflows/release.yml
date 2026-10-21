@@ -37,14 +37,47 @@ jobs:
         run: npm run dist:win:publish
       - name: Put the release notes on the release page
         # electron-builder ships releaseInfo into latest.yml (auto-update
-        # "what's new") but not always into the release page body; the page
-        # deserves the same notes, so patch it under the pushed tag.
+        # "what's new") but treats an already-published target as replaceable:
+        # re-publishes can leave the release as a draft. Make the page state
+        # explicit: find the release, patch notes + publish state, create it
+        # if electron-builder left nothing behind.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json" }
-          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$env:GITHUB_REF_NAME" -Headers $headers
+          $api = "https://api.github.com/repos/$env:GITHUB_REPOSITORY"
           $body = Get-Content RELEASE_NOTES.md -Raw
-          $payload = @{ body = $body } | ConvertTo-Json
-          Invoke-RestMethod -Method Patch -Uri $release.url -Headers $headers -Body ([System.Text.Encoding]::UTF8.GetBytes($payload)) -ContentType "application/json; charset=utf-8" | Out-Null
-          Write-Output "Release body set for $env:GITHUB_REF_NAME"
+          $patchPayload = @{ body = $body; draft = $false } | ConvertTo-Json
+          $target = $null
+          try {
+            $target = Invoke-RestMethod -Uri "$api/releases/tags/$env:GITHUB_REF_NAME" -Headers $headers
+            Write-Output "Found release $($target.id) by tag (draft=$($target.draft))"
+          } catch {
+            Write-Host "##[error]Tag lookup failed: $($_.Exception.Message)"
+            try {
+              $all = Invoke-RestMethod -Uri "$api/releases?per_page=100" -Headers $headers
+              $target = $all | Where-Object { $_.tag_name -eq $env:GITHUB_REF_NAME } | Select-Object -First 1
+              if ($target) { Write-Output "Found release $($target.id) in listing (draft=$($target.draft))" }
+            } catch {
+              Write-Host "##[error]Release listing failed: $($_.Exception.Message)"
+            }
+          }
+          if ($target) {
+            try {
+              Invoke-RestMethod -Method Patch -Uri $target.url -Headers $headers -Body ([System.Text.Encoding]::UTF8.GetBytes($patchPayload)) -ContentType "application/json; charset=utf-8" | Out-Null
+              Write-Output "Release body set for $env:GITHUB_REF_NAME"
+            } catch {
+              Write-Host "##[error]Patch failed: $($_.Exception.Message)"
+              exit 1
+            }
+          } else {
+            try {
+              $name = $env:GITHUB_REF_NAME.Substring(1)
+              $create = @{ tag_name = $env:GITHUB_REF_NAME; name = $name; body = $body; target_commitish = $env:GITHUB_SHA; draft = $false } | ConvertTo-Json
+              $made = Invoke-RestMethod -Method Post -Uri "$api/releases" -Headers $headers -Body ([System.Text.Encoding]::UTF8.GetBytes($create)) -ContentType "application/json; charset=utf-8"
+              Write-Output "Created release $($made.id)"
+            } catch {
+              Write-Host "##[error]Create failed: $($_.Exception.Message)"
+              exit 1
+            }
+          }
