@@ -31,10 +31,44 @@ function appHeader(status: RendererStatus): HTMLElement {
   brand.append(el("span", "brand-mark", "✦"), el("span", "brand-name", "Trace"), sub);
   const state = status.status === "done" ? "Ready" : status.status === "running" ? "Working" : "Needs attention";
   const mode = String(status.investigation_type || "debug") === "explain" ? "Explain" : "Debug";
-  header.append(brand,
-    el("span", `state-pill ${status.status}`, state),
-    el("span", `state-pill mode-${String(status.investigation_type || "debug")}`, mode));
+  const side = el("div", "header-side");
+  side.append(el("span", `state-pill ${status.status}`, state),
+    el("span", `state-pill mode-${String(status.investigation_type || "debug")}`, mode),
+    // File-level counterpart of the trust surface's Copy buttons: the export
+    // is the same honest mirror (verified/unverified separated, locations
+    // kept), and never writes without the OS save dialog.
+    saveReportButton(status));
+  header.append(brand, side);
   return header;
+}
+
+function saveReportButton(status: RendererStatus): HTMLButtonElement {
+  const b = el("button", "open-btn save-btn", "Save report") as HTMLButtonElement;
+  b.setAttribute("aria-label", "Save the report as a Markdown file");
+  b.disabled = status.status === "running";
+  b.addEventListener("click", async () => {
+    const back = "Save report";
+    b.disabled = true;
+    try {
+      const res = await window.trace.saveReport(status);
+      if (res && res.ok) {
+        b.textContent = "Saved";
+        setTimeout(() => { b.textContent = back; }, 1600);
+      } else if (res && res.reason === "canceled") {
+        b.textContent = back;
+      } else {
+        const err = res && res.error;
+        b.textContent = "Could not save";
+        console.log("save-report failed: " + (err || (res && res.reason) || "unknown"));
+        setTimeout(() => { b.textContent = back; }, 2400);
+      }
+    } catch {
+      b.textContent = "Could not save";
+      setTimeout(() => { b.textContent = back; }, 2400);
+    }
+    b.disabled = status.status === "running";
+  });
+  return b;
 }
 
 function historyBar(): HTMLElement {

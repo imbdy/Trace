@@ -15,6 +15,7 @@ export interface TraceBridge {
   history: (query?: string) => Promise<Record<string, unknown>[] | null>;
   showHistory: (id: string) => Promise<{ ok: boolean; reason?: string }>;
   openFile: (path: string, line?: number) => Promise<Record<string, unknown>>;
+  saveReport: (status: unknown) => Promise<{ ok: boolean; path?: string; reason?: string; error?: string }>;
   onStage: (cb: (ev: { investigation_id?: string; stage: string; message: string; progress: number }) => void) => void;
   onReport: (cb: (status: unknown) => void) => void;
   onBackend: (cb: (info: { ok: boolean; message: string }) => void) => void;
@@ -32,6 +33,7 @@ const api: TraceBridge = {
   history: (query) => ipcRenderer.invoke("trace:history", query ?? ""),
   showHistory: (id) => ipcRenderer.invoke("trace:show-history", id),
   openFile: (path, line) => ipcRenderer.invoke("trace:open-file", path, line),
+  saveReport: (status) => ipcRenderer.invoke("trace:save-report", status),
   onStage: (cb) => ipcRenderer.on("trace:stage", (_e: IpcRendererEvent, ev) => cb(ev)),
   onReport: (cb) => ipcRenderer.on("trace:report", (_e: IpcRendererEvent, st) => cb(st)),
   onBackend: (cb) => ipcRenderer.on("trace:backend", (_e: IpcRendererEvent, info) => cb(info)),
