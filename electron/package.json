@@ -12,7 +12,7 @@
     "dist:win:publish": "npm run build && electron-builder --win nsis --publish always",
     "start": "electron .",
     "smoke": "electron . --smoke",
-    "test": "node --test test/placement.test.js test/settings.test.js"
+    "test": "node --test test/placement.test.js test/settings.test.js test/report-export.test.js"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
