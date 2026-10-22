@@ -8,7 +8,7 @@
 // (core/watch/brief/vision) is gone; instead this spawns Trace's Python
 // backend, runs investigations through it, and owns the results window.
 // Renderer processes stay dumb; all backend I/O lives here in main.
-import { app, BrowserWindow, ipcMain, screen, shell, Notification, Tray, Menu, nativeImage } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, screen, shell, Notification, Tray, Menu, nativeImage } from "electron";
 import { autoUpdater } from "electron-updater";
 import * as path from "path";
 import * as fs from "fs";
@@ -23,6 +23,10 @@ const settings = require("./settings") as {
   defaults: () => Record<string, unknown>;
   load: (dir: string | null) => Record<string, unknown>;
   mayNotify: (s: Record<string, unknown>, date: Date) => boolean;
+};
+const reportExport = require("./report-export") as {
+  reportMarkdown: (status: unknown) => string;
+  sanitizeFileBase: (id: unknown) => string;
 };
 
 import { BackendManager } from "./backend";
@@ -640,6 +644,28 @@ function setupIpc(): void {
     } catch (e) {
       const err = e as ApiError;
       return { ok: false, error: err.message, code: (err as ApiError).code };
+    }
+  });
+
+  ipcMain.handle("trace:save-report", async (e, payload: unknown) => {
+    try {
+      const md = reportExport.reportMarkdown(payload);
+      const st = (payload && typeof payload === "object" ? payload : {}) as { investigation_id?: unknown };
+      const base = reportExport.sanitizeFileBase(st.investigation_id);
+      const win = BrowserWindow.fromWebContents(e.sender);
+      const dialogOpts = {
+        title: "Save Trace report",
+        defaultPath: `${base}.md`,
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+      };
+      const res = win
+        ? await dialog.showSaveDialog(win, dialogOpts)
+        : await dialog.showSaveDialog(dialogOpts);
+      if (res.canceled || !res.filePath) return { ok: false as const, reason: "canceled" };
+      await fs.promises.writeFile(res.filePath, md, "utf8");
+      return { ok: true as const, path: res.filePath };
+    } catch (err) {
+      return { ok: false as const, error: (err as Error).message };
     }
   });
 }
