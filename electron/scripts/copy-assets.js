@@ -18,7 +18,7 @@ copyDir(path.join(root, "src", "renderer", "neo"), path.join(root, "dist", "rend
   [".html", ".css", ".js"]);
 copyDir(path.join(root, "src", "renderer"), path.join(root, "dist", "renderer"),
   [".html", ".css"]);
-for (const f of ["placement.js", "settings.js"]) {
+for (const f of ["placement.js", "settings.js", "report-export.js"]) {
   fs.copyFileSync(path.join(root, "src", "main", f), path.join(root, "dist", "main", f));
   console.log("asset:", "dist/main/" + f);
 }
