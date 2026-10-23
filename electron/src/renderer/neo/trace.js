@@ -36,19 +36,6 @@
     return map[stage] || 'Working…';
   }
 
-  var EXPRESSION_FOR_STAGE = {
-    receive: 'thinking',
-    screenshot: 'investigating',
-    context: 'reading',
-    project_root: 'investigating',
-    error_extract: 'reading',
-    read_files: 'reading',
-    diagnostics: 'verifying',
-    model_analysis: 'thinking',
-    validate: 'verifying',
-    report: 'writing',
-  };
-
   function onStage(ev) {
     if (!ev) return;
     // Stale events from a previous run (e.g. after cancel) are ignored.
@@ -66,7 +53,9 @@
       try {
         if (ev.stage === 'done') { /* terminal verdict arrives via report */ }
         else if (ev.stage === 'error' || ev.stage === 'cancelled') { /* terminal, via report */ }
-        else c.working('Trace', label, EXPRESSION_FOR_STAGE[ev.stage] || 'investigating');
+        // One face while working (he thinks in three dots), not a mood per
+        // stage; the stage text lives in the leaf where it can be read.
+        else c.working('Trace', label);
       } catch (e) {}
     }
   }

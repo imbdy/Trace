@@ -1,20 +1,22 @@
-// Trace face: Neo hearthling transplant, craft intact. See Neo project.
+﻿// Trace face: Neo hearthling transplant, craft intact. See Neo project.
 //
 // Design lineage: interaction philosophy and animation techniques studied
 // from Coucou's Mochi (MIT-licensed code; its name, artwork and sounds stay
 // theirs and are NOT used here). What Neo takes over is the craft, not the
 // character: a compact superellipse body, eyes clipped to the silhouette and
 // projected on a gaze sphere, a small eye-shape vocabulary, keyframed tweens
-// with eased settle, a poke—annoyed—dizzy arc, and token-guarded timeouts.
+// with eased settle, a pokeâ€”annoyedâ€”dizzy arc, and token-guarded timeouts.
 //
-// Neo's own identity: a warm ember body (pale top, deep base, inner warmth
-// instead of a plain grey), monitoring-driven colour wash, a plain badge pip
-// above his head for waiting/error/done, and silence — he murmurs through
-// the shell's text lines, never with sound.
-//
-// States (monitoring truth, owned by the shell): idle | working | thinking |
-// listening (approval waits) | success (done) | error | sleeping.
-// Transients: startle / annoyed / dizzy overrides, greet on hello.
+  // Neo's own identity: a warm ember body (pale top, deep base, inner warmth
+  // instead of a plain grey), monitoring-driven colour wash, a plain badge pip
+  // above his head for waiting/error/done, and silence â€” he murmurs through
+  // the shell's text lines, never with sound.
+  //
+  // Faces stay lean: the first face (plain white body, dot eyes) carries
+  // every state; meaning comes from the colour wash, the pip and the status
+  // line. The only added expression is the thinking face â€” three dots that
+  // pulse where the pip would sit â€” shown while an investigation runs.
+  // Transients: startle / annoyed / dizzy overrides, greet on hello.
 'use strict';
 (function () {
   // ---------- easings (cubic essentials) ----------
@@ -52,29 +54,21 @@
 
   // Facial language is separate from motion state: "reading" can keep the
   // working body motion while changing only the eyes, brows, and mouth.
-  // Every entry is deliberately small enough to read at Trace's 48px face.
+  // One face, many meanings. Every state keeps the first face's dot eyes;
+  // only sleepy closes them. No brows, mouths, or one-off moods: the state
+  // colour wash, the pip and the status line carry the difference, so the
+  // face never lies about more than it can honestly show.
   const EXPRESSIONS = {
     idle: { base: 'idle', eye: 'dot', brow: 'none', mouth: 'none', gaze: [0, 0] },
     working: { base: 'working', eye: 'dot', brow: 'none', mouth: 'none', gaze: [0, 0] },
-    listening: { base: 'listening', eye: 'wide', brow: 'soft', mouth: 'small', gaze: [0, 0] },
-    curious: { base: 'idle', eye: 'wide', brow: 'raised', mouth: 'small', gaze: [0.16, 0.08] },
-    happy: { base: 'idle', eye: 'happy', brow: 'soft', mouth: 'smile', blush: 0.18, gaze: [0, 0] },
-    excited: { base: 'success', eye: 'wide', brow: 'raised', mouth: 'smile', blush: 0.3, gaze: [0, 0.08] },
-    skeptical: { base: 'idle', eye: 'flat', brow: 'skeptic', mouth: 'flat', gaze: [-0.12, 0] },
-    confused: { base: 'idle', eye: 'pill', brow: 'uneven', mouth: 'uncertain', gaze: [0.12, -0.03] },
-    focused: { base: 'working', eye: 'dot', brow: 'focused', mouth: 'none', gaze: [0, 0.06] },
-    sleepy: { base: 'sleeping', eye: 'closed', brow: 'soft', mouth: 'small', gaze: [0, -0.12] },
-    thinking: { base: 'thinking', eye: 'pill', brow: 'raised', mouth: 'small', gaze: [0.48, 0.38] },
-    investigating: { base: 'working', eye: 'dot', brow: 'focused', mouth: 'none', gaze: [0, 0.04] },
-    reading: { base: 'working', eye: 'dot', brow: 'none', mouth: 'none', gaze: [-0.2, 0.06] },
-    writing: { base: 'working', eye: 'dot', brow: 'focused', mouth: 'none', gaze: [0, 0.08] },
-    waiting: { base: 'listening', eye: 'wide', brow: 'soft', mouth: 'small', gaze: [0, 0] },
-    verifying: { base: 'working', eye: 'dot', brow: 'focused', mouth: 'none', gaze: [0, 0.08] },
-    success: { base: 'success', eye: 'happy', brow: 'soft', mouth: 'smile', blush: 0.22, gaze: [0, 0] },
-    warning: { base: 'listening', eye: 'wide', brow: 'concerned', mouth: 'concerned', gaze: [0, 0.02] },
-    error: { base: 'error', eye: 'flat', brow: 'concerned', mouth: 'frown', gaze: [0, -0.02] },
-    backend_unavailable: { base: 'error', eye: 'flat', brow: 'none', mouth: 'frown', gaze: [-0.14, 0] },
-    cancelled: { base: 'idle', eye: 'closed', brow: 'none', mouth: 'none', gaze: [0, 0] },
+    thinking: { base: 'thinking', eye: 'dot', brow: 'none', mouth: 'none', gaze: [0, 0] },
+    listening: { base: 'listening', eye: 'dot', brow: 'none', mouth: 'none', gaze: [0, 0] },
+    success: { base: 'success', eye: 'dot', brow: 'none', mouth: 'none', gaze: [0, 0] },
+    error: { base: 'error', eye: 'dot', brow: 'none', mouth: 'none', gaze: [0, 0] },
+    backend_unavailable: { base: 'error', eye: 'dot', brow: 'none', mouth: 'none', gaze: [0, 0] },
+    warning: { base: 'listening', eye: 'dot', brow: 'none', mouth: 'none', gaze: [0, 0] },
+    cancelled: { base: 'idle', eye: 'dot', brow: 'none', mouth: 'none', gaze: [0, 0] },
+    sleepy: { base: 'sleeping', eye: 'closed', brow: 'none', mouth: 'none', gaze: [0, -0.1] },
   };
   const EXPRESSION_NAMES = Object.keys(EXPRESSIONS);
 
@@ -101,6 +95,7 @@
     // tweened props (keyframed, eased)
     yaw: 0, pitch: 0, tilt: 0, open: 1, sx: 1, sy: 1, ox: 0, oy: 0,
     tint: 0, es: 1, blush: 0, badgeS: 0, peek: 0,
+    dotsA: 0,
     // smoothed targets
     tgYaw: 0, tgPitch: 0, tgTilt: 0, tgSx: 1, tgSy: 1, tgEs: 1,
     col: TINT.idle.slice(), colT: TINT.idle,
@@ -164,14 +159,12 @@
     setBadge(BADGE[base]);
     if (!C.reduced) {
       if (base === 'success') {
-        // happy little jump: up, land-squash, settle + a few sparks
-        anim('oy', [[-0.3, 120, Ease.out], [0.03, 200, Ease.inOut], [0, 160, Ease.back]]);
-        anim('sy', [[0.82, 80, Ease.out], [1.18, 130, Ease.out], [0.88, 160, Ease.inOut], [1, 200, Ease.back]]);
-        anim('sx', [[1.15, 80, Ease.out], [0.88, 130, Ease.out], [1.06, 160, Ease.inOut], [1, 200, Ease.back]]);
-        emitSparks(5);
+        // a single quiet settle: one dip, no jump, no sparks â€” done reads as
+        // "he stopped thinking", not a celebration
+        anim('oy', [[0.04, 110, Ease.out], [0, 260, Ease.inOut]]);
       } else if (base === 'error') {
         // restrained shake: no, this one is wrong
-        anim('ox', [[0.08, 50, Ease.out], [-0.08, 70, Ease.inOut], [0.05, 70, Ease.inOut], [0, 90, Ease.out]]);
+        anim('ox', [[0.07, 50, Ease.out], [-0.07, 70, Ease.inOut], [0.05, 70, Ease.inOut], [0, 90, Ease.out]]);
       } else if (base === 'listening') {
         // approval: pop up + settle with a soft overshoot, then a gentle bob
         anim('oy', [[-0.2, 150, Ease.out], [0, 300, Ease.back]]);
@@ -203,7 +196,7 @@
     anim('sx', [[1.16, 70, Ease.out], [0.95, 130, Ease.out], [1, 170, Ease.inOut]]);
   }
 
-  // The poke arc, Neo-flavoured: startle (wide dot) — annoyed (line) — dizzy.
+  // The poke arc, Neo-flavoured: startle (wide dot) â€” annoyed (line) â€” dizzy.
   // Returns the kind so the shell can murmur in key. Guarded against the
   // monitoring one-shots owning the stage.
   function pokeReact() {
@@ -232,14 +225,13 @@
     return 'startle';
   }
 
-  // Hello: happy eyes + a small bounce + a late blink. Token-guarded so a
-  // second hello (or a poke) replaces the first instead of stacking.
+  // Hello: a small bounce + a late blink. The first face stays the first
+  // face â€” no borrowed expressions, just motion. Token-guarded so a second
+  // hello (or a poke) replaces the first instead of stacking.
   function greet() {
     const t = nowS();
     const tok = ++C.greetToken;
     C.waveT0 = t + 0.15; C.waveUntil = t + 1.2;
-    C.eyeOverride = 'happy';
-    C.eyeOverrideUntil = t + 1.6;
     if (!C.reduced) anim('oy', [[-0.14, 200, Ease.out], [0, 320, Ease.back]]);
     setTimeout(() => { if (C.greetToken === tok) blink(); }, 600);
     setTimeout(() => { if (C.greetToken === tok) blink(); }, 1300);
@@ -353,7 +345,32 @@
     ctx.restore(); // untranslate
 
     if (C.badge && C.badgeS > 0.01) drawBadge(ctx, R, cx, cy);
+    drawThoughtDots(ctx, R, cx, cy);
     drawSparks(ctx, cx, cy);
+  }
+
+  // The thinking face: three dots pulse where the pip would sit â€” the classic
+  // "â€¦" shown as a real, breathing thought bubble. They share the badge perch
+  // exactly, so when he stops thinking his status pip grows out of the same
+  // spot. Cross-fades through C.dotsA so state changes never pop.
+  function drawThoughtDots(ctx, R, cx, cy) {
+    if (C.dotsA < 0.01) return;
+    const t = C.t;
+    ctx.save();
+    for (let i = 0; i < 3; i++) {
+      let s = 0.5;
+      if (!C.reduced) {
+        s = (Math.sin(t * 2.4 - i * 0.5) + 1) / 2;
+        s = s * s * (3 - 2 * s); // smoothstep: no linear flicker
+      }
+      const a = C.dotsA * (0.30 + 0.60 * s);
+      ctx.globalAlpha = Math.max(0, Math.min(1, a));
+      ctx.fillStyle = '#EEF0F4';
+      ctx.beginPath();
+      ctx.arc(cx + R * (1.02 + i * 0.24), cy - R * (0.95 + i * 0.16), R * (0.052 + 0.012 * s), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   function drawFace(ctx, R, rx, ry) {
@@ -604,6 +621,10 @@
       const cc = TINT[C.state];
       C.col[i] += (cc[i] - C.col[i]) * (1 - Math.pow(0.002, dt));
     }
+
+    // thinking dots cross-fade: in while a run is busy, out to the pip
+    const dotsTarget = (C.state === 'working' || C.state === 'thinking') ? 1 : 0;
+    C.dotsA += (dotsTarget - C.dotsA) * (1 - Math.pow(0.001, dt));
 
     if (t > C.nextBlink && C.state !== 'sleeping') {
       blink();
