@@ -83,6 +83,21 @@ export class TraceApi {
     throw new ApiError("bad_response", "Backend did not return a follow-up id.");
   }
 
+  // Plain conversation. Unlike investigations this is synchronous: one
+  // request, one prose reply, no stages, no verification anywhere.
+  async chat(message: string,
+             history: { role: string; content: string }[]):
+    Promise<string> {
+    const { status, payload } = await this.request("POST", "/chat", {
+      message,
+      history,
+    });
+    if (status === 200 && typeof payload.reply === "string" && payload.reply.trim()) {
+      return payload.reply;
+    }
+    throw new ApiError("bad_response", "The backend returned no chat reply.");
+  }
+
   async getStatus(id: string): Promise<InvestigationStatus> {
     const { payload } = await this.request("GET", `/investigations/${id}`);
     return payload as unknown as InvestigationStatus;

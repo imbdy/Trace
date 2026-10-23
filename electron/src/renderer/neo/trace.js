@@ -149,6 +149,32 @@
     });
   }
 
+  // Normal chatting: the model alone, no stages, no evidence, no fixes. The
+  // driver keeps its one-at-a-time discipline (a chat reply and an
+  // investigation should not race inside the shell).
+  function chat(text, history) {
+    if (running) return Promise.resolve({ ok: false, reason: 'busy' });
+    if (!text || !String(text).trim()) return Promise.resolve({ ok: false, reason: 'empty' });
+    setRunning(true);
+    var c = shell();
+    if (c) { try { c.working('Trace', 'Talking it through…', 'thinking'); } catch (e) {} }
+    var payload = String(text).slice(0, 8000);
+    var hist = Array.isArray(history) ? history.slice(-10) : [];
+    return window.trace.chat(payload, hist).then(function (res) {
+      setRunning(false);
+      if (!res || res.ok === false) {
+        if (c) { try { c.error('Hmm', res && res.error ? String(res.error).slice(0, 90) : 'could not talk just now.'); } catch (e) {} }
+        return res;
+      }
+      if (c) { try { c.idle('here.'); } catch (e) {} }
+      return res;
+    }).catch(function () {
+      setRunning(false);
+      if (c) { try { c.error('Hmm', 'could not talk just now.'); } catch (e2) {} }
+      return { ok: false, reason: 'error' };
+    });
+  }
+
   function submit(text, opts) {
     if (running) return Promise.resolve({ ok: false, reason: 'busy' });
     if (!text || !String(text).trim()) return Promise.resolve({ ok: false, reason: 'empty' });
@@ -219,6 +245,7 @@
   window.TraceDriver = {
     submit: submit,
     talk: talk,
+    chat: chat,
     cancel: cancel,
     state: function () { return { running: running, id: currentId, last: lastId }; },
   };

@@ -27,6 +27,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from .chat import ChatModelError, chat_reply
 from .config import TraceConfig
 from .history import HistoryJournal, default_history_dir
 from .investigation_engine import InvestigationCancelled, InvestigationEngine
@@ -495,6 +496,24 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                     target, int(line) if isinstance(line, int) else None)
                 return self._send_json(result,
                                        200 if result.get("ok") else 404)
+            if path == "/api/v1/chat":
+                # Plain conversation: model round-trip only, no evidence, no
+                # tools. Also answer in text the UI can show as a bubble.
+                data = self._read_json()
+                message = str(data.get("message", "")).strip()
+                if not message:
+                    return self._send_json(error_envelope(
+                        "bad_request", "Missing 'message'"), 400)
+                if len(message) > 8000:
+                    return self._send_json(error_envelope(
+                        "bad_request", "Chat message too long"), 400)
+                try:
+                    reply = chat_reply(store.engine, message,
+                                       data.get("history"))
+                except ChatModelError as exc:
+                    return self._send_json(error_envelope(
+                        "ollama_error", str(exc)), 502)
+                return self._send_json({"reply": reply})
             return self._send_json(error_envelope("not_found", "Unknown route"), 404)
 
         def _start_follow_up(self, parent_id: str):

@@ -15,6 +15,7 @@
 
   var Sh = {
     open: false,          // panel unfolded?
+    chat: false,          // chat surface up (workspace hidden while true)?
     glow: '',             // leaf-glow class
     lastMood: 'idle',
     _settle: null,
@@ -92,6 +93,71 @@
     } catch (e) {}
   }
 
+  /* ---- chat surface: inside his window, never a second window ---- */
+  function setChatShown(on) {
+    Sh.chat = !!on;
+    if (leafEl) leafEl.classList.toggle('chat-open', !!on);
+    var c = document.getElementById('chat');
+    if (c) {
+      c.hidden = !on;
+      c.setAttribute('aria-hidden', on ? 'false' : 'true');
+    }
+  }
+  function chatBubble(kind, text) {
+    var log = document.getElementById('chat-log');
+    if (!log) return;
+    var m = document.createElement('div');
+    m.className = 'msg ' + kind;
+    var who = document.createElement('span');
+    who.className = 'who';
+    who.textContent = kind === 'me' ? 'you' : (kind === 'err' ? 'trace' : 'trace');
+    var says = document.createElement('span');
+    says.className = 'say';
+    says.textContent = String(text == null ? '' : text).slice(0, 4000);
+    m.appendChild(who); m.appendChild(says);
+    log.appendChild(m);
+    scrollChat();
+  }
+  function scrollChat() {
+    var s = document.getElementById('chat-scroll');
+    if (s) s.scrollTop = s.scrollHeight;
+  }
+  function chatHistory() {
+    var log = document.getElementById('chat-log');
+    if (!log) return [];
+    var rows = Array.prototype.slice.call(log.children).filter(function (n) {
+      return n && n.classList &&
+        (n.classList.contains('trace') || n.classList.contains('me'));
+    });
+    return rows.slice(-10).map(function (n) {
+      var says = n.querySelector('.say');
+      return {
+        role: n.classList.contains('me') ? 'user' : 'assistant',
+        content: says ? String(says.textContent || '') : '',
+      };
+    });
+  }
+  function setChatMode(on) {
+    setChatShown(!!on);
+    if (on) {
+      var log = document.getElementById('chat-log');
+      if (log && !log.children.length) {
+        chatBubble('trace', 'here. what are we looking at?');
+      }
+      if (!Sh.open) api.expand();
+      else requestFit();
+      requestFitSettled();
+      var inp = document.getElementById('chat-input');
+      if (inp) {
+        requestAnimationFrame(function () {
+          try { inp.focus({ preventScroll: true }); } catch (e) {}
+        });
+      }
+    } else {
+      requestFit();
+    }
+  }
+
   function expand() {
     if (!Sh.open) {
       Sh.open = true;
@@ -111,6 +177,7 @@
   function collapse(fromKbd) {
     if (Sh.open) {
       Sh.open = false;
+      setChatShown(false);
       if (leafEl) { leafEl.classList.remove('open'); }
       if (leafBodyEl) { leafBodyEl.setAttribute('aria-hidden', 'true'); }
       syncFaceOpen();
@@ -238,9 +305,13 @@
     var s = document.getElementById('ask-send');
     var c = document.getElementById('ctl-cancel');
     var t = document.getElementById('talk-text');
+    var ci = document.getElementById('chat-input');
+    var cs = document.getElementById('chat-send');
     if (s) s.disabled = !on;
     if (c) c.disabled = on;
     if (t) t.disabled = !on;
+    if (ci) ci.disabled = !on;
+    if (cs) cs.disabled = !on;
   }
   // Mode toggle: reflect it in the ambient line so the creature never
   // pretends to debug when the user asked for an explanation (and vice versa).
@@ -254,6 +325,8 @@
     }
   } catch (e) {}
   wire('leaf-fold', function () { api.collapse(); });
+  wire('leaf-chat', function () { setChatMode(!Sh.chat); });
+  wire('chat-send', function () { chatSend(); });
   // Submit/cancel go through TraceDriver (trace.js), never straight to the
   // bridge: the driver owns `running`, which is what enables Cancel while an
   // investigation is in flight. Bypassing it left ctl-cancel permanently
@@ -337,6 +410,40 @@
     talkBox.addEventListener('focus', function () {
       if (H) { try { H.wake(); } catch (e) {} }
     });
+  }
+  // Chat composer: Enter sends, nothing folds, the click guard for
+  // interactive children keeps the leaf-level expansion handler off it.
+  var chatInput = document.getElementById('chat-input');
+  if (chatInput) {
+    chatInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); chatSend(); }
+      e.stopPropagation();
+    });
+    chatInput.addEventListener('focus', function () {
+      if (H) { try { H.wake(); } catch (e) {} }
+    });
+  }
+  function chatSend() {
+    var inp = document.getElementById('chat-input');
+    if (!inp) return;
+    var text = (inp.value || '').trim();
+    if (!text) return;
+    var d = driver();
+    if (!d || typeof d.chat !== 'function') {
+      note('could not start that one', false);
+      return;
+    }
+    chatBubble('me', text);
+    inp.value = '';
+    d.chat(text, chatHistory()).then(function (res) {
+      if (res && res.ok === false) {
+        chatBubble('err', res.reason === 'busy'
+          ? 'one thing at a time — cancel or wait first.'
+          : (res.error || 'could not talk just now.'));
+      } else {
+        chatBubble('trace', (res && res.reply) || '');
+      }
+    }).catch(function () { chatBubble('err', 'could not talk just now.'); });
   }
 
   window.addEventListener('keydown', function (e) {
