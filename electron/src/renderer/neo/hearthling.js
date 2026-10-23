@@ -8,7 +8,7 @@
 // with eased settle, a pokeâ€”annoyedâ€”dizzy arc, and token-guarded timeouts.
 //
   // Neo's own identity: a warm ember body (pale top, deep base, inner warmth
-  // instead of a plain grey), monitoring-driven colour wash, a plain badge pip
+  // instead of a plain grey), status-driven colour wash, a plain badge pip
   // above his head for waiting/error/done, and silence â€” he murmurs through
   // the shell's text lines, never with sound.
   //
@@ -39,7 +39,7 @@
   const EYE_P = -0.12;  // resting pitch (gaze sits a touch high, alert but calm)
   const INK = '#26211D'; // dark eyes on the white face: always clearly visible
 
-  // Neo's monitoring palette: his body washes toward these, bottom-up.
+  // Neo's status palette: his body washes toward these, bottom-up.
   const TINT = {
     idle: [0.85, 0.80, 0.70],
     working: [0.42, 0.61, 1.00],
@@ -198,7 +198,7 @@
 
   // The poke arc, Neo-flavoured: startle (wide dot) â€” annoyed (line) â€” dizzy.
   // Returns the kind so the shell can murmur in key. Guarded against the
-  // monitoring one-shots owning the stage.
+  // status one-shots owning the stage.
   function pokeReact() {
     if (C.state === 'success' || C.state === 'error') { squash(); return 'busy'; }
     const t = nowS();
@@ -308,7 +308,7 @@
     ctx.save();
     tracePath(ctx, pts, 0, 0, 0);
     ctx.clip();
-    // monitoring wash, bottom-up
+    // status wash, bottom-up
     if (C.tint > 0.01) {
       const c = C.col;
       const tg = ctx.createLinearGradient(0, ry, 0, -ry);
