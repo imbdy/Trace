@@ -100,9 +100,9 @@
       try {
         if (fixed) {
           var n = (fixed.applied_files || []).length;
-          c.done('Fixed', 'fixed ' + n + ' file' + (n === 1 ? '' : 's') + ' — all set.', verified, 'excited');
+          c.done('Fixed', 'fixed ' + n + ' file' + (n === 1 ? '' : 's') + ' — all set.', verified, 'success');
         } else if (warnings && !verified) c.warning('Review this', String(rep.warnings[0]).slice(0, 90));
-        else c.done('Done', verified ? verified + ' verified spot' + (verified === 1 ? '' : 's') + ' — all set.' : 'no solid location — all set.', verified, verified ? 'excited' : 'success');
+        else c.done('Done', verified ? verified + ' verified spot' + (verified === 1 ? '' : 's') + ' — all set.' : 'no solid location — all set.', verified, 'success');
       }
       catch (e) {}
     }
