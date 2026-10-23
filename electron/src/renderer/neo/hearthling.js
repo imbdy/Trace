@@ -144,8 +144,11 @@
 
   function setState(next) {
     const requested = EXPRESSIONS[next] ? next : null;
-    const base = requested ? EXPRESSIONS[next].base : next;
-    if (STATES.indexOf(base) < 0) return false;
+    let base = requested ? EXPRESSIONS[next].base : next;
+    // An unknown creature name must never freeze him in his old state (one
+    // unrecognised mood name once stuck him mid-think): anything nobody
+    // defined degrades to rest.
+    if (STATES.indexOf(base) < 0) return setState('idle');
     if (C.state === base && (!requested || C.expression === requested)) return true;
     C.state = base;
     setExpression(requested || base);

@@ -186,6 +186,10 @@ class TestNeoFidelity(unittest.TestCase):
         self.assertNotIn("emitSparks(5)", trace)
         self.assertIn("expressions: EXPRESSION_NAMES.slice()", trace)
         self.assertIn("setExpression", trace)
+        # the retired 'excited' name froze him mid-think once: the driver must
+        # only ever pass creature names the face actually defines
+        driver = (SRC / "renderer/neo/trace.js").read_text(encoding="utf-8")
+        self.assertNotRegex(trace + "\n" + driver, r"['\"]excited['\"]")
 
 
 if __name__ == "__main__":
