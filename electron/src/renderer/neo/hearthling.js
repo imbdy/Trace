@@ -72,12 +72,6 @@
   };
   const EXPRESSION_NAMES = Object.keys(EXPRESSIONS);
 
-  // Per-state look bias on the gaze sphere [yaw, pitch]: thinking looks away,
-  // sleeping drops, approval holds yours.
-  const LOOK = {
-    idle: null, working: null, thinking: [0.55, 0.55],
-    listening: null, success: null, error: null, sleeping: [0, -0.3],
-  };
   const TINT_K = { idle: 0, working: 0.55, thinking: 0.5, listening: 0.7, success: 0.35, error: 0.7, sleeping: 0.3 };
   const BADGE = { // small pip above his head: the at-a-glance state.
     // Working/thinking carry no pip: the colour wash + busy eyes already say
@@ -583,14 +577,19 @@
     stepTweens();
     const t = C.t;
 
-    // gaze targets: cursor, bent by state (thinking looks away, sleep drops)
+    // gaze targets: cursor, bent by state
     let ty = C.lookX * 0.62, tp = C.lookY * 0.5;
-    const bias = LOOK[C.state];
     const faceGaze = (EXPRESSIONS[C.expression] || EXPRESSIONS.idle).gaze || [0, 0];
     ty = ty * 0.72 + faceGaze[0] * 0.28;
     tp = tp * 0.72 + faceGaze[1] * 0.28;
-    if (bias) { ty = ty * 0.35 + bias[0] * 0.55; tp = tp * 0.3 + bias[1] * 0.5; }
     if (C.state === 'sleeping') { ty = 0; tp = -0.14; }
+    // Coucou's scan behaviour: while he works his eyes sweep the code, and the
+    // cursor tracking pauses — he is busy, not watching you. (port of
+    // `cfg.scans`, windows/src/mochi/engine.ts, MIT)
+    if (!C.reduced && (C.state === 'working' || C.state === 'thinking' || C.state === 'listening')) {
+      ty = Math.sin(t * 2.6) * 0.5;
+      tp = -0.06;
+    }
     const still = (t - (C.lastCursorT || 0)) > 3;
     if (!C.cursorActive || still) {
       if (!C.reduced) {
@@ -600,16 +599,18 @@
       } else { ty = 0; tp = 0; }
     }
 
-    // listening bob: gentle, continuous (attentive, not alarming)
-    let bobY = 0;
-    if (C.state === 'listening' && !C.reduced) bobY = -Math.abs(Math.sin(t * 5.2)) * 0.07;
-
+    // Coucou's wave sway: during the greet window the head tips gently side to
+    // side (port of the `waveStart..waveUntil` tilt at 2π·1.2 Hz).
+    let tiltTarget = 0;
+    if (!C.reduced && t > (C.waveT0 || 0) && t < C.waveUntil) {
+      tiltTarget = -0.06 + Math.sin(2 * Math.PI * 1.2 * (t - C.waveT0)) * 0.07;
+    }
     const kLook = 1 - Math.pow(0.0025, dt);
     const kGen = 1 - Math.pow(0.0008, dt);
     if (!C.locks.has('yaw')) C.yaw += (ty - C.yaw) * kLook;
     if (!C.locks.has('pitch')) C.pitch += (tp - C.pitch) * kLook;
-    if (!C.locks.has('tilt')) C.tilt += (0 - C.tilt) * kGen;
-    if (!C.locks.has('oy')) C.oy += (bobY - C.oy) * kGen;
+    if (!C.locks.has('tilt')) C.tilt += (tiltTarget - C.tilt) * kGen;
+    if (!C.locks.has('oy')) C.oy += (0 - C.oy) * kGen;
     if (!C.locks.has('sx')) C.sx += (1 - C.sx) * kGen;
     if (!C.locks.has('sy')) {
       const br = C.state === 'sleeping' ? 0.04 : 0.02;
