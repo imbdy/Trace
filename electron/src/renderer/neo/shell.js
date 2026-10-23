@@ -237,8 +237,10 @@
   function setAskEnabled(on) {
     var s = document.getElementById('ask-send');
     var c = document.getElementById('ctl-cancel');
+    var t = document.getElementById('talk-text');
     if (s) s.disabled = !on;
     if (c) c.disabled = on;
+    if (t) t.disabled = !on;
   }
   // Mode toggle: reflect it in the ambient line so the creature never
   // pretends to debug when the user asked for an explanation (and vice versa).
@@ -309,6 +311,30 @@
       e.stopPropagation();
     });
     askBox.addEventListener('focus', function () {
+      if (H) { try { H.wake(); } catch (e) {} }
+    });
+  }
+  // Talk stays in the normal form: Enter here must not expand or fold the
+  // workspace, just send through the driver (follow-up if a run exists, an
+  // explain ask otherwise).
+  var talkBox = document.getElementById('talk-text');
+  if (talkBox) {
+    talkBox.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        var text = (talkBox.value || '').trim();
+        if (!text) return;
+        var d = driver();
+        if (!d || typeof d.talk !== 'function') { note('could not start that one', false); return; }
+        d.talk(text).then(function (res) {
+          if (res && res.ok === false && res.reason === 'busy') note('one at a time — cancel first', false);
+          else if (res && res.ok === false) note('could not start that one', false);
+          else talkBox.value = '';
+        }).catch(function () { note('could not start that one', false); });
+      }
+      e.stopPropagation();
+    });
+    talkBox.addEventListener('focus', function () {
       if (H) { try { H.wake(); } catch (e) {} }
     });
   }

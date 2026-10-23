@@ -153,6 +153,19 @@ html, body {
   -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
   transition: color 0.25s ease;
 }
+/* talk stays inside his normal form: a quiet line under the status. Enter
+   sends it as a follow-up to the last investigation; before the first run it
+   goes out as an explain ask instead. No workspace unfold. */
+#talk-row { margin-top: 6px; }
+#talk-text {
+  width: 100%; box-sizing: border-box; background: transparent; border: 0;
+  border-bottom: 1px solid rgba(233, 236, 241, 0.22); border-radius: 0;
+  color: #e9ecf1; font: 12px/1.4 Consolas, monospace; padding: 3px 0 4px;
+  transition: border-color 0.25s ease;
+}
+#talk-text::placeholder { color: rgba(233, 236, 241, 0.38); }
+#talk-text:focus { outline: none; border-bottom-color: #8faeff; }
+#talk-text:disabled { opacity: 0.45; }
 
 /* ---- live investigation ---- */
 #live[hidden] { display: none; }
