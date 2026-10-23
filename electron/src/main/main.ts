@@ -600,6 +600,33 @@ function setupIpc(): void {
     return followId ? { ok: true as const, id: followId } : { ok: true as const };
   });
 
+  // Normal chat, no investigation machinery: one model round-trip. Chat and
+  // investigations may interleave (the backend queues LLM calls), but the
+  // renderer's driver serializes its own sends anyway.
+  ipcMain.handle("trace:chat",
+    async (_e, message: string, history?: { role: string; content: string }[]) => {
+      if (typeof message !== "string" || !message.trim()) {
+        return { ok: false as const, reason: "empty" };
+      }
+      if (!(await backend.health())) {
+        const ok = await backend.ensure(__dirname);
+        if (!ok) return { ok: false as const, reason: "backend_down" };
+      }
+      const hist = Array.isArray(history)
+        ? history.slice(-20).map((h) => ({
+            role: String(h && h.role === "assistant" ? "assistant" : "user"),
+            content: String(h && h.content ? String(h.content).slice(0, 4000) : ""),
+          })).filter((h) => h.content)
+        : [];
+      try {
+        const reply = await api.chat(message.trim().slice(0, 8000), hist);
+        return { ok: true as const, reply };
+      } catch (e) {
+        const err = e as { code?: string; message?: string };
+        return { ok: false as const, reason: err.code || "chat_failed", error: err.message };
+      }
+    });
+
   ipcMain.handle("trace:cancel", async () => {
     if (!run) return { ok: false as const };
     run.abort.abort();

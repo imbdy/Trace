@@ -167,6 +167,47 @@ html, body {
 #talk-text:focus { outline: none; border-bottom-color: #8faeff; }
 #talk-text:disabled { opacity: 0.45; }
 
+/* ---- chat, in his window ---- */
+#chat[hidden] { display: none; }
+#chat {
+  background: rgba(8, 11, 17, 0.5);
+  border: 1px solid rgba(159, 184, 255, 0.12);
+  border-radius: 14px;
+  padding: 10px 12px 12px;
+  display: flex; flex-direction: column; gap: 8px;
+  max-height: 320px;
+}
+#chat[hidden] { display: none; }
+#chat-scroll { flex: 1 1 auto; overflow-y: auto; max-height: 252px; scrollbar-width: thin; }
+#chat-log { display: flex; flex-direction: column; gap: 7px; font-size: 12px; line-height: 1.45; }
+#chat-log .msg { max-width: 92%; padding: 6px 9px; border-radius: 11px; overflow-wrap: anywhere; }
+#chat-log .msg .who {
+  display: block; font-size: 10px; letter-spacing: 0.06em; margin-bottom: 2px;
+  color: rgba(233, 236, 241, 0.5); font-family: Consolas, monospace;
+}
+#chat-log .msg.me { align-self: flex-end; background: rgba(143, 174, 255, 0.16); color: #eef2ff; border-bottom-right-radius: 4px; }
+#chat-log .msg.trace { align-self: flex-start; background: rgba(233, 236, 241, 0.07); color: #e9ecf1; border-bottom-left-radius: 4px; }
+#chat-log .msg.err { align-self: flex-start; background: rgba(239, 84, 80, 0.16); color: #ffd9d7; border-bottom-left-radius: 4px; }
+#chat-composer { display: flex; gap: 8px; }
+#chat-input {
+  flex: 1 1 auto; min-width: 0; background: rgba(233, 236, 241, 0.06);
+  border: 1px solid rgba(159, 184, 255, 0.16); border-radius: 10px;
+  color: #e9ecf1; font: 12px/1.4 Consolas, monospace; padding: 7px 10px;
+}
+#chat-input::placeholder { color: rgba(233, 236, 241, 0.35); }
+#chat-input:focus { outline: none; border-color: #8faeff; }
+#chat-input:disabled { opacity: 0.45; }
+#chat-send {
+  border: 1px solid rgba(159, 184, 255, 0.28); border-radius: 10px;
+  background: rgba(143, 174, 255, 0.12); color: #dfe7ff; cursor: pointer;
+  font-size: 12px; padding: 7px 12px;
+}
+#chat-send:hover:not(:disabled) { background: rgba(143, 174, 255, 0.24); }
+#chat-send:active:not(:disabled) { transform: scale(0.96); }
+#chat-send:disabled { opacity: 0.45; cursor: default; }
+#leaf-chat[aria-pressed="true"] { background: rgba(143, 174, 255, 0.26); color: #fff; }
+#leaf.chat-open #leaf-body { display: none; }
+
 /* ---- live investigation ---- */
 #live[hidden] { display: none; }
 #live {

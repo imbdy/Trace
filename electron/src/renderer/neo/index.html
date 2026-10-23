@@ -34,6 +34,8 @@
           </div>
         </div>
         <div id="face-btns">
+          <button id="leaf-chat" type="button" title="chat with him — stays in this window"
+            aria-pressed="false" aria-controls="chat">chat</button>
           <button id="leaf-fold" type="button" title="fold the panel (esc)">fold</button>
         </div>
       </div>
@@ -70,6 +72,19 @@
           <button id="ctl-cancel" type="button" disabled>Cancel</button>
           <button id="ctl-results" type="button">Results</button>
           <button id="ctl-hide" type="button" title="hide Trace entirely — the tray brings him back">Tuck away</button>
+        </div>
+      </div>
+      <!-- Normal chat lives in HIS window: no second window, no browser tab,
+           no separate surface. Bubbles + a composer, run from the chat button. -->
+      <div id="chat" hidden aria-hidden="true">
+        <div id="chat-scroll">
+          <div id="chat-log" role="log" aria-label="Chat with Trace"></div>
+        </div>
+        <div id="chat-composer">
+          <input id="chat-input" type="text" spellcheck="false" autocomplete="off"
+            placeholder="Say anything — Enter to send" aria-label="Chat message"
+            title="Talk with Trace right here">
+          <button id="chat-send" type="button">send</button>
         </div>
       </div>
     </div>
