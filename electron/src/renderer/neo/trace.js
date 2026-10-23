@@ -9,6 +9,7 @@
 (function () {
   var currentId = null;
   var running = false;
+  var lastId = null; // the last finished run: plain talk follows up on it
 
   function shell() { return window.TraceShell || null; }
   function panel() { return window.TracePanel || null; }
@@ -109,6 +110,45 @@
     currentId = null;
   }
 
+  // Talk lives inside his normal form: Enter on the perch line. With a run on
+  // record it rides on it as a follow-up; before the first run it goes out as
+  // an explain investigation, which is what a conversation question is.
+  function talk(text) {
+    if (running) return Promise.resolve({ ok: false, reason: 'busy' });
+    if (!text || !String(text).trim()) return Promise.resolve({ ok: false, reason: 'empty' });
+    setRunning(true);
+    var c = shell();
+    var p = panel();
+    if (c) { try { c.working('Trace', 'Talking through it…', 'thinking'); } catch (e) {} }
+    var payload = String(text).slice(0, 8000);
+    var useFollow = !!lastId;
+    var bridge;
+    if (!window.trace) {
+      bridge = Promise.resolve({ ok: false, reason: 'no-bridge' });
+    } else if (useFollow) {
+      bridge = window.trace.followUp(lastId, payload);
+    } else {
+      bridge = window.trace.submit(payload, { investigation_type: 'explain' });
+    }
+    return Promise.resolve(bridge).then(function (res) {
+      if (!res || res.ok === false) {
+        setRunning(false);
+        if (c) { try { c.error('Hmm', res && res.reason === 'busy' ? 'one at a time.' : 'could not start that one.'); } catch (e) {} }
+        return res;
+      }
+      if (res.id) {
+        currentId = res.id;
+        lastId = res.id;
+      }
+      if (p && currentId) { try { p.begin(currentId, 'Talk'); } catch (e) {} }
+      return res;
+    }).catch(function () {
+      setRunning(false);
+      if (c) { try { c.error('Hmm', 'could not start that one.'); } catch (e2) {} }
+      return { ok: false, reason: 'error' };
+    });
+  }
+
   function submit(text, opts) {
     if (running) return Promise.resolve({ ok: false, reason: 'busy' });
     if (!text || !String(text).trim()) return Promise.resolve({ ok: false, reason: 'empty' });
@@ -130,6 +170,7 @@
         return res;
       }
       currentId = res.id || null;
+      if (res.id) lastId = res.id;
       if (p) { try { p.begin(currentId, 'Investigation'); } catch (e) {} }
       return res;
     }).catch(function (e) {
@@ -177,7 +218,8 @@
 
   window.TraceDriver = {
     submit: submit,
+    talk: talk,
     cancel: cancel,
-    state: function () { return { running: running, id: currentId }; },
+    state: function () { return { running: running, id: currentId, last: lastId }; },
   };
 })();
