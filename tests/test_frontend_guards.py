@@ -172,11 +172,18 @@ class TestNeoFidelity(unittest.TestCase):
         for name in ("rr", "drawEyeShape", "drawBadge", "drawSparks"):
             self.assertEqual(function_block(trace, name), function_block(neo, name), name)
 
-        for name in ("idle", "curious", "happy", "excited", "skeptical", "confused",
-                     "focused", "sleepy", "thinking", "investigating", "reading",
-                     "writing", "waiting", "verifying", "success", "warning", "error",
-                     "backend_unavailable", "cancelled"):
+        for name in ("idle", "working", "thinking", "listening", "success",
+                     "warning", "error", "backend_unavailable", "cancelled",
+                     "sleepy"):
             self.assertRegex(trace, r"\b" + name + r"\s*:")
+        # the retired moods must stay retired: one first face + thinking dots
+        for gone in ("curious", "skeptical", "confused", "investigating",
+                     "reading", "writing", "verifying"):
+            self.assertNotRegex(trace, r"\b" + gone + r"\s*:")
+        # the thinking face: three pulsing dots, cross-faded, no spark show
+        self.assertIn("drawThoughtDots", trace)
+        self.assertIn("dotsA", trace)
+        self.assertNotIn("emitSparks(5)", trace)
         self.assertIn("expressions: EXPRESSION_NAMES.slice()", trace)
         self.assertIn("setExpression", trace)
 
