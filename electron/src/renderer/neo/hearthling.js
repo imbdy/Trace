@@ -101,6 +101,7 @@
     particles: [],
     slapTimes: [], greetToken: 0, waveT0: 0, waveUntil: 0,
     nextBlink: 2.5, lastAmbient: 0,
+    puffs: [],
     reduced: REDUCED, sleepArmed: false,
     fps: 0, _frames: 0, _fpsT: 0,
     onDizzy: null,
@@ -341,6 +342,7 @@
     if (C.badge && C.badgeS > 0.01) drawBadge(ctx, R, cx, cy);
     drawThoughtDots(ctx, R, cx, cy);
     drawSparks(ctx, cx, cy);
+    drawPuffs(ctx, R, cx, cy);
   }
 
   // The thinking face: three dots pulse where the pip would sit â€” the classic
@@ -561,6 +563,55 @@
     ctx.restore();
   }
 
+  // Coucou's ambient one-shots: a sweat drop floats up while a run fails
+  // ("this one is hard"), and drifting z's while he sleeps. Ported from
+  // emit()/drawParticles() in windows/src/mochi/engine.ts (MIT) — R-unit
+  // physics, same teardrop and z glyph, alpha eased in then out.
+  function emitPuff(kind) {
+    C.puffs.push({
+      kind,
+      x: (Math.random() - 0.5) * 0.9 + (kind === 'z' ? 0.55 : 0),
+      y: -0.7 - Math.random() * 0.2,
+      vx: (Math.random() - 0.5) * 0.35 + (kind === 'z' ? 0.18 : 0),
+      vy: -(0.45 + Math.random() * 0.35),
+      age: 0,
+      life: 1.3 + Math.random() * 0.5,
+      rot: Math.random() * Math.PI * 2,
+      size: 0.15 + Math.random() * 0.08,
+    });
+  }
+
+  function drawPuffs(ctx, R, cx, cy) {
+    if (!C.puffs.length) return;
+    ctx.save();
+    for (const p of C.puffs) {
+      if (p.age <= 0) continue;
+      const k = p.age / p.life;
+      ctx.globalAlpha = Math.max(0, k < 0.2 ? k / 0.2 : 1 - (k - 0.2) / 0.8);
+      const px = cx + (p.x + p.vx * p.age) * R * 0.9;
+      const py = cy + (p.y + p.vy * p.age) * R * 0.9;
+      const sz = p.size * R * 1.05;
+      ctx.save();
+      ctx.translate(px, py);
+      if (p.kind === 'z') {
+        ctx.fillStyle = 'rgb(209, 219, 235)';
+        ctx.font = '700 ' + (sz * 1.9).toFixed(1) + 'px Consolas, monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('z', 0, 0);
+      } else {
+        ctx.fillStyle = '#7cc7ff';
+        ctx.beginPath();
+        ctx.moveTo(0, -sz);
+        ctx.quadraticCurveTo(sz * 0.8, sz * 0.2, 0, sz * 0.6);
+        ctx.quadraticCurveTo(-sz * 0.8, sz * 0.2, 0, -sz);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
   // ---------- loop: one rAF, tweens + exponential settle, no per-event timers ----------
   let canvas = null, ctx = null, raf = 0, last = 0;
   let driftSeed = Math.random() * 100;
@@ -633,7 +684,16 @@
       C.nextBlink = t + 2.2 + Math.random() * 3.2;
     }
     if (C.eyeOverride && t > C.eyeOverrideUntil) { C.eyeOverride = null; C.eyeOverrideUntil = 0; }
-    if (t - C.lastAmbient > 1.3) { C.lastAmbient = t; }
+    // Coucou's ambient loop: every 1.3 s sleep breathes z's and error lets a
+    // sweat drop go half the time (windows/src/mochi/engine.ts, MIT).
+    if (t - C.lastAmbient > 1.3) {
+      C.lastAmbient = t;
+      if (C.state === 'sleeping') emitPuff('z');
+      else if (C.state === 'error' && Math.random() < 0.5) emitPuff('sweat');
+    }
+
+    for (const p of C.puffs) p.age += dt;
+    C.puffs = C.puffs.filter((p) => p.age < p.life);
 
     for (const p of C.particles) { p.age += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 160 * dt; }
     C.particles = C.particles.filter((p) => p.age < p.life);
