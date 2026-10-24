@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/icons/trace-256.png" width="88" alt="Trace">
   <h1>Trace</h1>
-  <p><strong>An AI debugging companion that verifies every file it cites.</strong></p>
+  <p><strong>An AI debugging console that verifies every file it cites.</strong></p>
   <p>
     Describe the bug. Trace captures your screen, reads your actual source,
     runs your project's diagnostics, and returns a verdict — with every
@@ -47,20 +47,12 @@ fact** section. There is no third bucket where a guess quietly becomes a fact.
 
 ---
 
-## Screenshots
+## Interface
 
-<p align="center">
-  <img src="docs/images/companion.png" width="820" alt="Trace collapsed, ready to debug">
-</p>
+Trace is a small floating debugging console above your work. It stays compact
+until you open the investigation panel.
 
-Trace lives as a small floating companion above your work. It is not in your
-taskbar, not in your way, and it has nothing to say until you ask.
-
-<p align="center">
-  <img src="docs/images/investigating.png" width="820" alt="Trace investigating, progress rail lighting up">
-</p>
-
-Click the face to open it, describe the bug, press <kbd>Investigate</kbd>. The
+Open the Trace panel, describe the bug, and press <kbd>Investigate</kbd>. The
 progress rail lights up one step at a time — but only for stages the backend
 actually reported. Nothing is simulated to make it look busy.
 
@@ -77,12 +69,8 @@ The results window is a three-tab workspace: **Answer** for the verdict,
 what was collected and what is still missing.
 
 <p align="center">
-  <img src="docs/images/verdict.png" width="820" alt="Trace finished, two verified locations">
-</p>
-
-<p align="center">
-  <sub>Screenshots are real renders of the shipped UI, driven by a synthetic
-  investigation. The <code>shop-api</code> example project is fictional.</sub>
+  <sub>The result-window screenshots show the shipped Answer, Code &amp; Diff,
+  and Evidence views. The <code>shop-api</code> example project is fictional.</sub>
 </p>
 
 ---
@@ -117,11 +105,9 @@ buried in nested ifs:
 - **Malformed model JSON gets one bounded repair.** If the verdict isn't
   valid JSON, Trace re-asks once with a JSON-only prompt. Still broken? An
   honest low-confidence report; never a fabricated one.
-- **The reasoning phase is visible.** The model streams its analysis; the
-  backend emits throttled "thinking ▸ …" stage events (whitespace-collapsed
-  tails of the newest output, capped per call), so the once-silent
-  `model_analysis` gap shows live reasoning in the character's status and
-  the activity log. Parsing/verification semantics are unchanged.
+- **The reasoning phase is represented honestly.** The backend reports the
+  `model_analysis` stage while the configured provider is working; Trace does
+  not invent progress or expose hidden chain-of-thought.
 - **The graph path is in the evidence.** `Evidence` shows which nodes the
   run actually visited (`receive → capture ∥ → … → report`), plus
   per-branch parallel timings, so a verdict is inspectable end-to-end.
@@ -181,7 +167,7 @@ python main.py                    # tkinter fallback UI
 Show Trace, Open results, Check for updates, and Quit. Once you tuck the window
 away, the tray is how you get it back.
 
-**Ask.** Click the face to unfold the panel. Type the bug or paste the traceback.
+**Ask.** Open the Trace panel. Type the bug or paste the traceback.
 <kbd>Enter</kbd> submits, <kbd>Shift</kbd>+<kbd>Enter</kbd> adds a line.
 <kbd>Esc</kbd> or `fold` closes the panel.
 
@@ -315,7 +301,7 @@ trace_backend/          L3 model client  →  L2 orchestrator (agent graph)  →
   agent_graph.py          stdlib-only graph runtime: nodes, conditional
                           routes, parallel fan-out/fan-in, cycle guard,
                           visited-node trace
-  ollama_client.py        only thing that talks to Ollama
+  ollama_client.py        provider client for Ollama and compatible APIs
   investigation_engine.py the 10-stage pipeline declared as graph nodes
   validator.py            checks every cited path and line
   project_inspector.py    bounded, redacted project reads
@@ -327,7 +313,7 @@ trace_backend/          L3 model client  →  L2 orchestrator (agent graph)  →
 electron/src/
   main/                   window, tray, backend supervisor, IPC
   preload.ts              the entire renderer-facing API surface
-  renderer/neo/           the floating companion
+  renderer/neo/           the floating Trace panel
   renderer/results.ts     the results workspace
 
 trace_ui/               zero-dependency tkinter fallback
