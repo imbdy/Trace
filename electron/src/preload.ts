@@ -10,6 +10,9 @@ export interface TraceBridge {
   followUp: (parentId: string, text: string) => Promise<{ ok: boolean; id?: string; reason?: string }>;
   chat: (message: string, history?: { role: string; content: string }[]) =>
     Promise<{ ok: boolean; reply?: string; reason?: string; error?: string }>;
+  getProviderConfig: () => Promise<Record<string, unknown>>;
+  configureProvider: (config: { provider: string; model: string; api_base?: string; api_key?: string }) =>
+    Promise<Record<string, unknown>>;
   cancel: () => Promise<{ ok: boolean }>;
   applyFix: (id: string, dryRun?: boolean) => Promise<Record<string, unknown>>;
   showResults: () => Promise<{ ok: boolean }>;
@@ -29,6 +32,8 @@ const api: TraceBridge = {
   submit: (text, opts) => ipcRenderer.invoke("trace:submit", text, opts ?? {}),
   followUp: (parentId, text) => ipcRenderer.invoke("trace:follow-up", parentId, text),
   chat: (message, history) => ipcRenderer.invoke("trace:chat", message, history ?? []),
+  getProviderConfig: () => ipcRenderer.invoke("trace:get-provider-config"),
+  configureProvider: (config) => ipcRenderer.invoke("trace:configure-provider", config),
   cancel: () => ipcRenderer.invoke("trace:cancel"),
   applyFix: (id, dryRun) => ipcRenderer.invoke("trace:apply-fix", id, !!dryRun),
   showResults: () => ipcRenderer.invoke("trace:show-results"),

@@ -24,6 +24,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import dataclasses
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -449,6 +450,24 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
         def do_POST(self):
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path.rstrip("/") or "/"
+            if path == "/api/v1/config":
+                data = self._read_json()
+                provider = str(data.get("provider", "ollama")).strip().lower()
+                model = str(data.get("model", "")).strip()
+                api_base = str(data.get("api_base", "")).strip().rstrip("/")
+                api_key = str(data.get("api_key", ""))
+                if provider not in ("ollama", "openai-compatible") or not model:
+                    return self._send_json(error_envelope("bad_request", "Choose a provider and model."), 400)
+                if provider == "openai-compatible" and not api_base.startswith(("http://", "https://")):
+                    return self._send_json(error_envelope("bad_request", "API base must be an http(s) URL."), 400)
+                next_cfg = dataclasses.replace(
+                    config, provider=provider, ollama_model=model,
+                    api_base=api_base or None, ollama_api_key=api_key or None,
+                    ollama_host=api_base or config.ollama_host)
+                config.__dict__.update(next_cfg.__dict__)
+                store.engine.config = config
+                store.engine.ollama.config = config
+                return self._send_json(config.redacted())
             if path == "/api/v1/investigations":
                 data = self._read_json()
                 req = InvestigationRequest.from_dict(data)

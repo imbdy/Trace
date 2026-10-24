@@ -94,6 +94,8 @@ class OllamaClient:
     # -- public API ---------------------------------------------------------
     def check_connection(self, timeout: float | None = None) -> dict:
         """Return ``{"ok": True, "models": [...]}`` or raise OllamaError."""
+        if self.config.provider == "openai-compatible":
+            return self._check_openai_connection(timeout)
         timeout = timeout if timeout is not None else self.config.list_models_timeout_s
         url = self._url("/api/tags")
         req = urllib.request.Request(url, headers=self._headers(), method="GET")
@@ -129,6 +131,8 @@ class OllamaClient:
         Raises OllamaCancelledError if ``cancel_event`` is set.
         """
         timeout = timeout if timeout is not None else self.config.read_timeout_s
+        if self.config.provider == "openai-compatible":
+            return self._openai_chat(messages, timeout=timeout)
         payload = {
             "model": self.config.ollama_model,
             "messages": messages,
@@ -139,6 +143,49 @@ class OllamaClient:
         return self._post("/api/chat", payload, timeout=timeout,
                           stream=stream, on_token=on_token,
                           cancel_event=cancel_event)
+
+    def _openai_base(self) -> str:
+        return (self.config.api_base or self.config.ollama_host).rstrip("/")
+
+    def _openai_headers(self) -> dict:
+        headers = {"Content-Type": "application/json"}
+        if self.config.ollama_api_key:
+            headers["Authorization"] = f"Bearer {self.config.ollama_api_key}"
+        return headers
+
+    def _check_openai_connection(self, timeout: float | None) -> dict:
+        req = urllib.request.Request(self._openai_base() + "/models",
+                                     headers=self._openai_headers(), method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout or self.config.list_models_timeout_s) as resp:
+                data = json.loads(resp.read().decode("utf-8", "replace"))
+                models = [m.get("id") for m in data.get("data", []) if isinstance(m, dict)]
+                return {"ok": True, "models": models}
+        except Exception as exc:
+            raise self._friendly_connection_error(exc) from exc
+
+    def _openai_chat(self, messages: list[dict], *, timeout: float) -> str:
+        payload = {"model": self.config.ollama_model, "messages": messages,
+                   "stream": False}
+        req = urllib.request.Request(self._openai_base() + "/chat/completions",
+                                     data=json.dumps(payload).encode("utf-8"),
+                                     headers=self._openai_headers(), method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode("utf-8", "replace"))
+            choices = data.get("choices", [])
+            content = choices[0].get("message", {}).get("content") if choices else None
+            if not content:
+                raise OllamaError("Provider returned no assistant message.")
+            return str(content)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", "replace")[:500]
+            if exc.code in (401, 403):
+                raise OllamaAuthError("The provider rejected this API key.",
+                                      hint="Check the key and provider endpoint.") from exc
+            raise OllamaError(f"Provider request failed (HTTP {exc.code}): {detail}") from exc
+        except (urllib.error.URLError, socket.timeout, TimeoutError, OSError) as exc:
+            raise self._friendly_connection_error(exc) from exc
 
     def generate(self, prompt: str, *, system: str | None = None,
                  images: list[str] | None = None,

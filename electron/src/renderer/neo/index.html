@@ -34,8 +34,10 @@
           </div>
         </div>
         <div id="face-btns">
-          <button id="leaf-chat" type="button" title="chat with him — stays in this window"
-            aria-pressed="false" aria-controls="chat">chat</button>
+          <button id="leaf-chat" class="icon-btn" type="button" title="chat with Trace"
+            aria-pressed="false" aria-controls="chat" aria-label="Chat with Trace">⌁</button>
+          <button id="leaf-settings" class="icon-btn" type="button" title="model connection"
+            aria-pressed="false" aria-controls="provider-settings" aria-label="Model connection">⚙</button>
           <button id="leaf-fold" type="button" title="fold the panel (esc)">fold</button>
         </div>
       </div>
@@ -87,6 +89,17 @@
           <button id="chat-send" type="button">send</button>
         </div>
       </div>
+      <section id="provider-settings" hidden aria-hidden="true" aria-label="Model connection settings">
+        <div class="settings-heading"><span>Model connection</span><span id="provider-status">not connected</span></div>
+        <p class="settings-copy">Use Ollama locally, or connect any OpenAI-compatible API.</p>
+        <div class="settings-grid">
+          <label>Provider<select id="provider-kind"><option value="ollama">Ollama</option><option value="openai-compatible">OpenAI-compatible API</option></select></label>
+          <label>Model<input id="provider-model" type="text" autocomplete="off" placeholder="gpt-4o-mini"></label>
+          <label id="provider-base-row">API base<input id="provider-base" type="url" autocomplete="off" placeholder="https://api.openai.com/v1"></label>
+          <label id="provider-key-row">API key<input id="provider-key" type="password" autocomplete="off" placeholder="sk-…"></label>
+        </div>
+        <div class="settings-actions"><button id="provider-save" type="button">Save connection</button><span id="provider-hint">Keys are used locally by Trace.</span></div>
+      </section>
     </div>
   </div>
 </div>

@@ -8,7 +8,7 @@
 // (core/watch/brief/vision) is gone; instead this spawns Trace's Python
 // backend, runs investigations through it, and owns the results window.
 // Renderer processes stay dumb; all backend I/O lives here in main.
-import { app, BrowserWindow, dialog, ipcMain, screen, shell, Notification, Tray, Menu, nativeImage } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, screen, shell, Notification, Tray, Menu, nativeImage, safeStorage } from "electron";
 import { autoUpdater } from "electron-updater";
 import * as path from "path";
 import * as fs from "fs";
@@ -112,6 +112,7 @@ let lastStatus: InvestigationStatus | null = null;
 let display: Electron.Display | null = null;
 
 let cfg: Record<string, unknown> = settings.defaults();
+let savedProviderProfile: { provider: string; model: string; api_base?: string; api_key?: string } | null = null;
 
 function settingsDir(): string | null {
   try {
@@ -119,6 +120,26 @@ function settingsDir(): string | null {
   } catch {
     return null;
   }
+}
+function providerProfilePath(): string | null {
+  const dir = settingsDir();
+  return dir ? path.join(dir, "trace-provider.bin") : null;
+}
+function saveProviderProfile(profile: Record<string, string>): void {
+  try {
+    const target = providerProfilePath();
+    if (!target || !safeStorage.isEncryptionAvailable()) return;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, safeStorage.encryptString(JSON.stringify(profile)));
+  } catch { /* best effort; never break Trace */ }
+}
+function loadProviderProfile(): { provider: string; model: string; api_base?: string; api_key?: string } | null {
+  try {
+    const target = providerProfilePath();
+    if (!target || !safeStorage.isEncryptionAvailable()) return null;
+    const value = JSON.parse(safeStorage.decryptString(fs.readFileSync(target)));
+    return value && typeof value === "object" ? value as { provider: string; model: string; api_base?: string; api_key?: string } : null;
+  } catch { return null; }
 }
 function mayNudge(): boolean {
   try {
@@ -627,6 +648,29 @@ function setupIpc(): void {
       }
     });
 
+  ipcMain.handle("trace:get-provider-config", async () => {
+    try { return await api.providerConfig(); }
+    catch { return { provider: "ollama", model: "", api_base: "", has_api_key: false }; }
+  });
+
+  ipcMain.handle("trace:configure-provider", async (_e, raw: Record<string, unknown>) => {
+    const provider = raw && raw.provider === "ollama" ? "ollama" : "openai-compatible";
+    const model = String(raw && raw.model || "").trim().slice(0, 200);
+    const apiBase = String(raw && raw.api_base || "").trim().slice(0, 500);
+    const enteredKey = String(raw && raw.api_key || "").trim().slice(0, 1000);
+    const apiKey = enteredKey || (savedProviderProfile?.api_key || "");
+    if (!model) return { ok: false, reason: "model_required" };
+    try {
+      const out = await api.configureProvider({ provider, model, api_base: apiBase, api_key: apiKey });
+      savedProviderProfile = { provider, model, api_base: apiBase, api_key: apiKey };
+      saveProviderProfile(savedProviderProfile);
+      return { ok: true, config: out };
+    } catch (e) {
+      const err = e as { message?: string; code?: string };
+      return { ok: false, reason: err.code || "provider_failed", error: err.message || "Could not save provider." };
+    }
+  });
+
   ipcMain.handle("trace:cancel", async () => {
     if (!run) return { ok: false as const };
     run.abort.abort();
@@ -866,6 +910,10 @@ async function startup(): Promise<void> {
   cfg = settings.load(settingsDir());
   setupIpc();
   const okBackend = await backend.ensure(__dirname);
+  savedProviderProfile = loadProviderProfile();
+  if (okBackend && savedProviderProfile && savedProviderProfile.model) {
+    try { await api.configureProvider(savedProviderProfile); } catch { /* UI reports disconnected */ }
+  }
   charWin = createCharacter();
   resultsWin = createResults();
   buildTray();
