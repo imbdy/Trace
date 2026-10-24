@@ -3,6 +3,14 @@
 All notable changes to Trace. Versions follow the release commit messages.
 Dates are UTC.
 
+## 0.4.3 — 2026-10-24
+
+- Added an in-app provider panel for Ollama and OpenAI-compatible APIs,
+  including model, endpoint and API-key configuration.
+- API keys stay out of the renderer and use Electron encrypted storage when
+  available.
+- Restyled the chat control as a compact icon-based panel matching Trace's UI.
+
 ## 0.4.2 — 2026-10-21
 
 - Race-free SSE delivery (atomic subscribe, guaranteed terminal event),

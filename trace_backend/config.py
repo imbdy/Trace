@@ -74,6 +74,10 @@ class TraceConfig:
     ollama_model: str = DEFAULT_MODEL
     # Optional bearer token for Ollama cloud auth. Read ONLY from env.
     ollama_api_key: str | None = None
+    # Provider mode. OpenAI-compatible covers OpenAI, OpenRouter, Groq,
+    # Together, local gateways, and custom providers exposing /chat/completions.
+    provider: str = "ollama"
+    api_base: str | None = None
     connect_timeout_s: float = 5.0
     read_timeout_s: float = 120.0
     list_models_timeout_s: float = 10.0
@@ -109,6 +113,8 @@ class TraceConfig:
             ollama_host=os.environ.get("OLLAMA_HOST", DEFAULT_OLLAMA_HOST).rstrip("/"),
             ollama_model=os.environ.get("TRACE_MODEL", DEFAULT_MODEL),
             ollama_api_key=os.environ.get("OLLAMA_API_KEY"),
+            provider=os.environ.get("TRACE_PROVIDER", "ollama").strip().lower(),
+            api_base=os.environ.get("TRACE_API_BASE") or None,
             connect_timeout_s=float(os.environ.get("TRACE_CONNECT_TIMEOUT_S", "5")),
             read_timeout_s=float(os.environ.get("TRACE_READ_TIMEOUT_S", "120")),
             bind_host=os.environ.get("TRACE_BIND_HOST", DEFAULT_BIND_HOST),
@@ -139,6 +145,10 @@ class TraceConfig:
             problems.append(f"ollama_host must be an http(s) URL, got {self.ollama_host!r}")
         if not self.ollama_model.strip():
             problems.append("ollama_model must not be empty")
+        if self.provider not in ("ollama", "openai-compatible"):
+            problems.append("provider must be 'ollama' or 'openai-compatible'")
+        if self.provider == "openai-compatible" and not (self.api_base or "").strip():
+            problems.append("api_base is required for openai-compatible providers")
         if not (2 <= self.max_iterations <= 1000):
             problems.append(
                 f"max_iterations must be between 2 and 1000, got "
@@ -152,6 +162,8 @@ class TraceConfig:
             "ollama_host": self.ollama_host,
             "ollama_model": self.ollama_model,
             "has_api_key": bool(self.ollama_api_key),
+            "provider": self.provider,
+            "api_base": self.api_base or self.ollama_host,
             "max_context_chars": self.max_context_chars,
             "bind_host": self.bind_host,
             "bind_port": self.bind_port,

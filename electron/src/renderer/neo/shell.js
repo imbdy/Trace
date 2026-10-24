@@ -158,6 +158,59 @@
     }
   }
 
+  function setSettingsShown(on) {
+    var s = document.getElementById('provider-settings');
+    if (!s) return;
+    s.hidden = !on;
+    s.setAttribute('aria-hidden', on ? 'false' : 'true');
+    var b = document.getElementById('leaf-settings');
+    if (b) b.setAttribute('aria-pressed', on ? 'true' : 'false');
+    if (on) {
+      setChatShown(false);
+      if (!Sh.open) api.expand();
+      var bridge = window.trace;
+      if (bridge && bridge.getProviderConfig) bridge.getProviderConfig().then(function (c) {
+        var kind = document.getElementById('provider-kind');
+        var model = document.getElementById('provider-model');
+        var base = document.getElementById('provider-base');
+        if (kind) kind.value = c.provider === 'openai-compatible' ? 'openai-compatible' : 'ollama';
+        if (model) model.value = String(c.ollama_model || '');
+        if (base) base.value = String(c.api_base || '');
+        providerKindChanged();
+        providerStatus(c.has_api_key ? 'key saved' : 'not connected');
+      }).catch(function () {});
+      requestFitSettled();
+    } else requestFit();
+  }
+  function providerStatus(text) {
+    var el = document.getElementById('provider-status');
+    if (el) el.textContent = text;
+  }
+  function providerKindChanged() {
+    var kind = document.getElementById('provider-kind');
+    var row = document.getElementById('provider-base-row');
+    if (row) row.hidden = !kind || kind.value !== 'openai-compatible';
+  }
+  function saveProvider() {
+    var kind = document.getElementById('provider-kind');
+    var model = document.getElementById('provider-model');
+    var base = document.getElementById('provider-base');
+    var key = document.getElementById('provider-key');
+    var btn = document.getElementById('provider-save');
+    if (!kind || !model || !window.trace || !window.trace.configureProvider) return;
+    if (!String(model.value || '').trim()) { providerStatus('model required'); return; }
+    if (btn) btn.disabled = true;
+    providerStatus('connecting…');
+    window.trace.configureProvider({ provider: kind.value, model: model.value, api_base: base ? base.value : '', api_key: key ? key.value : '' })
+      .then(function (res) {
+        if (!res || res.ok === false) { providerStatus('could not connect'); if (res && res.error) note(res.error, false); return; }
+        providerStatus('ready');
+        if (key) key.value = '';
+        note('model connection ready', true);
+      }).catch(function () { providerStatus('could not connect'); })
+      .finally(function () { if (btn) btn.disabled = false; });
+  }
+
   function expand() {
     if (!Sh.open) {
       Sh.open = true;
@@ -178,6 +231,7 @@
     if (Sh.open) {
       Sh.open = false;
       setChatShown(false);
+      setSettingsShown(false);
       if (leafEl) { leafEl.classList.remove('open'); }
       if (leafBodyEl) { leafBodyEl.setAttribute('aria-hidden', 'true'); }
       syncFaceOpen();
@@ -326,6 +380,13 @@
   } catch (e) {}
   wire('leaf-fold', function () { api.collapse(); });
   wire('leaf-chat', function () { setChatMode(!Sh.chat); });
+  wire('leaf-settings', function () {
+    var s = document.getElementById('provider-settings');
+    setSettingsShown(!s || s.hidden);
+  });
+  wire('provider-save', saveProvider);
+  var providerKind = document.getElementById('provider-kind');
+  if (providerKind) providerKind.addEventListener('change', providerKindChanged);
   wire('chat-send', function () { chatSend(); });
   // Submit/cancel go through TraceDriver (trace.js), never straight to the
   // bridge: the driver owns `running`, which is what enables Cancel while an

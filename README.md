@@ -141,8 +141,11 @@ Grab the latest installer from
 [releases](https://github.com/imbdy/Trace/releases). It ships the Python backend
 as a bundled executable, so you do not need Python installed.
 
-Trace needs a model to think with. Install
-[Ollama](https://ollama.com) and pull the default model:
+Trace needs a model to think with. The packaged app includes an in-app model
+connection panel, so users can either connect Ollama or use an API provider
+without editing environment variables.
+
+For local Ollama, install [Ollama](https://ollama.com) and pull the default model:
 
 ```powershell
 ollama serve
@@ -181,6 +184,13 @@ away, the tray is how you get it back.
 **Ask.** Click the face to unfold the panel. Type the bug or paste the traceback.
 <kbd>Enter</kbd> submits, <kbd>Shift</kbd>+<kbd>Enter</kbd> adds a line.
 <kbd>Esc</kbd> or `fold` closes the panel.
+
+**Connect a model.** Click the gear icon in the Trace header. Choose Ollama or
+**OpenAI-compatible API**, enter the model name, and for hosted providers enter
+the API base (for example `https://api.openai.com/v1`) and API key. This works
+with OpenAI, OpenRouter, Groq, Together, local gateways, and compatible custom
+endpoints. Trace keeps the key out of the renderer and stores it with the
+operating system's encrypted storage when available.
 
 **Debug or Explain.** A real switch, not a label. *Debug* extracts the error,
 reads the frames from your traceback, and may propose a patch. *Explain* skips
@@ -240,13 +250,17 @@ prompt to click.
 
 ## Configuration
 
-Everything is environment-overridable; nothing is stored in a config file.
+Everything is environment-overridable. Desktop users can configure the active
+provider from the gear panel; the API key is stored separately using Electron's
+encrypted storage when the OS supports it.
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `TRACE_MODEL` | `gemma4:31b-cloud` | Model name |
 | `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama endpoint |
 | `OLLAMA_API_KEY` | *(unset)* | Bearer token, if the endpoint needs one |
+| `TRACE_PROVIDER` | `ollama` | `ollama` or `openai-compatible` |
+| `TRACE_API_BASE` | *(unset)* | Base URL for an OpenAI-compatible provider |
 | `TRACE_BIND_HOST` | `127.0.0.1` | Must stay loopback |
 | `TRACE_BIND_PORT` | `3777` | Backend port |
 | `TRACE_CONNECT_TIMEOUT_S` | `5` | Connect timeout |
@@ -268,8 +282,9 @@ and `--smoke` for the headless self-test.
 Stated plainly, because a debugging tool that overstates itself is the exact
 problem it exists to solve:
 
-- **No settings UI.** Perch position, quiet hours and notification preferences
-  can only be changed by editing `trace-settings.json` in the user-data directory.
+- **Limited settings UI.** Model provider, model, API base and API key are
+  configurable in-app. Perch position, quiet hours and notification preferences
+  still require editing `trace-settings.json` in the user-data directory.
 - **`Open at line N` uses your OS default handler.** It opens the file; jumping
   to the line depends on editor integration that is not implemented.
 - **No dry-run preview.** The backend supports `dry_run`, but there is no
@@ -277,9 +292,9 @@ problem it exists to solve:
 - **History is capped at 50** with no pagination.
 - **Backups are never cleaned up.** Delete `*.trace-bak` files yourself.
 - **The window is not draggable and not click-through.**
-- **Missing Ollama is not detected up front.** Trace starts and looks healthy;
-  if the model is unreachable you get a completed report with low confidence
-  rather than an error.
+- **Provider connectivity is lazy.** Trace saves provider settings without
+  making a test generation request; an invalid endpoint or key is reported when
+  the first chat or investigation runs.
 - **Only Windows installers are published.**
 
 ---

@@ -98,6 +98,16 @@ export class TraceApi {
     throw new ApiError("bad_response", "The backend returned no chat reply.");
   }
 
+  async configureProvider(config: { provider: string; model: string; api_base?: string; api_key?: string }): Promise<Record<string, unknown>> {
+    const { payload } = await this.request("POST", "/config", config);
+    return payload;
+  }
+
+  async providerConfig(): Promise<Record<string, unknown>> {
+    const { payload } = await this.request("GET", "/config");
+    return payload;
+  }
+
   async getStatus(id: string): Promise<InvestigationStatus> {
     const { payload } = await this.request("GET", `/investigations/${id}`);
     return payload as unknown as InvestigationStatus;

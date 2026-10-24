@@ -1,3 +1,17 @@
+# 0.4.3
+
+Model connections and interface polish
+
+- Added an in-app model connection panel opened from the compact gear icon.
+- Trace can now use Ollama or any OpenAI-compatible `/chat/completions`
+  provider, including hosted APIs, local gateways, and custom endpoints.
+- API keys stay out of the renderer and are persisted through Electron's
+  encrypted storage when the operating system supports it.
+- Reworked the chat control into a compact icon-based panel that matches the
+  Trace command surface.
+- Existing Ollama environment configuration remains supported for source and
+  headless/backend-only runs.
+
 # 0.4.2
 
 Stability
