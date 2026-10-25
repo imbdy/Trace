@@ -7,8 +7,8 @@ except the composition roots, which only wire startup (never business logic).
 ┌─────────────────────────────────────────────────────────┐
 │ 1. Trace command bar  ······ electron/src/renderer/neo/ │
 │    your request and investigation progress              │
-│    hearthling.js face (verbatim Neo primitives) inside  │
-│    a custom glass console: shell.js chrome, leaf.js     │
+│    hearthling.js renderer inside a custom glass console:│
+│    shell.js chrome, leaf.js                             │
 │    progress rail, trace.js driver; composer + stitch +  │
 │    verdict. No ambient chatter, no poke/tuck gimmicks.  │
 └──────────────────────────┬──────────────────────────────┘
@@ -27,10 +27,10 @@ except the composition roots, which only wire startup (never business logic).
                            │ redacted evidence bundle only
                            ▼
 ┌─────────────────────────────────────────────────────────┐
-│ 3. Ollama — gemma4:31b-cloud ··· ollama_client.py       │
+│ 3. Model provider ················· ollama_client.py    │
 │    Reasoning, root-cause analysis, and explanations     │
-│    standalone: imports only config + stdlib. Only the   │
-│    Python backend ever contacts Ollama — never Electron │
+│    supports Ollama and OpenAI-compatible chat APIs.     │
+│    Only the Python backend contacts the model provider. │
 └──────────────────────────┬──────────────────────────────┘
                            │ unverified model JSON
                            ▼
@@ -99,10 +99,10 @@ collect ─┬─ diagnostics ∥ (opt-in) tests ∥ intelligence ─┬→ anal
                                                       report
 ```
 
-The `analyze` call streams: deltas become throttled `model_analysis`
-"thinking ▸ …" SSE events (`_stream_thinker`, ≤24 ticks × 480 chars per
-call, newest-90-chars tails). Same event shape as every other stage
-event — no contract change; the UI just stops staring at silence.
+The `analyze` call reports the `model_analysis` stage while the configured
+provider is working. Ollama supports the backend's streaming path; compatible
+providers currently use a non-streaming completion request. The UI never
+invents progress or exposes hidden chain-of-thought.
 
 The model-driven `repair` node is the only edge into the model beyond
 `analyze` — one bounded re-ask with a JSON-only prompt. Every other node's
@@ -121,7 +121,7 @@ rules.
 | Code intelligence is grounded | `code_tools` ← only `project_inspector`; search/regex/outline/symbols/recency/tree/config-checks/annotations/tests never execute project scripts (tests run only the allowlisted runner, opt-in) |
 | Safe fixer is grounded | `code_fixer` ← only `project_inspector` + `validator`; only verified hunks are written, always with `*.trace-bak` backups |
 | Transport is dumb | `traceApi.ts` is fetch-only HTTP (start/stream/cancel/open-file/apply-fix); renderer files are import-free plain scripts behind the preload bridge |
-| L1 Face craft, Trace console | face renderer keeps Neo's spring/eye primitives (verbatim fidelity); the console chrome is Trace's own — composer, progress rail, verdict — no backend URLs, no model access, no Neoma (enforced by `tests/test_frontend_guards.py`) |
+| L1 Trace console | renderer owns the console chrome — composer, progress rail, chat, provider settings, and verdict — with no backend URLs or model access (enforced by `tests/test_frontend_guards.py`) |
 | L5 renders backend JSON | results renderer builds Diagnosis/Locations/Fix/Evidence from status JSON; incomplete states render as honest banners; Apply-fix calls the backend endpoint |
 | Single bridge | Only composition roots (`electron/src/main/main.ts` spawn + IPC, `trace_ui/app.py`, `main.py` CLI) reference both sides, for startup wiring only |
 
