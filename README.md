@@ -1,352 +1,241 @@
-<div align="center">
-  <img src="assets/icons/trace-256.png" width="88" alt="Trace">
-  <h1>Trace</h1>
-  <p><strong>An AI debugging console that verifies every file it cites.</strong></p>
-  <p>
-    Describe the bug. Trace captures your screen, reads your actual source,
-    runs your project's diagnostics, and returns a verdict — with every
-    <code>file:line</code> checked against the files on disk before you see it.
-  </p>
-  <p>
-    <a href="https://github.com/imbdy/Trace/releases/latest">
-      <img alt="release" src="https://img.shields.io/github/v/release/imbdy/Trace?style=flat-square&label=release&color=7c8cff">
-    </a>
-    <a href="https://github.com/imbdy/Trace/releases">
-      <img alt="downloads" src="https://img.shields.io/github/downloads/imbdy/Trace/total?style=flat-square&label=downloads&color=5be08f">
-    </a>
-    <a href="https://github.com/imbdy/Trace/commits/main">
-      <img alt="last commit" src="https://img.shields.io/github/last-commit/imbdy/Trace?style=flat-square&label=commit&color=9aa4bf">
-    </a>
-    <img alt="platform" src="https://img.shields.io/badge/platform-Windows-0078D4?style=flat-square&logo=windows&logoColor=white">
-    <img alt="model" src="https://img.shields.io/badge/model-Ollama-202020?style=flat-square&logo=ollama&logoColor=white">
-  </p>
-</div>
+# Trace
 
----
+Trace is an evidence-first Windows desktop debugging console. Describe a bug,
+let Trace collect bounded project evidence, and receive a report whose file
+paths and line numbers are checked against the files on disk.
 
-## Why this exists
+Current release: **0.4.3**.
 
-Ask a language model about a bug and it will, with total confidence, tell you to
-fix `app/handlers/user.py:142`. Sometimes that file exists. Sometimes it does not.
-Either way the answer reads exactly the same, and you find out which it was only
-after you have chased the reference.
+## What Trace does
 
-Trace is built around removing that failure mode. Every location it reports is
-opened on disk and checked. Anything it cannot confirm is moved out of the
-findings and into a clearly labelled **unverified — treat as hypothesis, not
-fact** section. There is no third bucket where a guess quietly becomes a fact.
+Trace combines a floating Electron interface with a local Python backend that
+can:
 
-| | A bare LLM | Trace |
-|---|---|---|
-| File paths | Invented, plausible | Opened and confirmed on disk |
-| Line numbers | Approximate | Verified against the file |
-| Your screen | Not sent | Captured and redacted |
-| Your clipboard | Read if asked | **Never read** |
-| Patches | Prose suggestions | Unified diff, verified, backed up |
-| "I'm not sure" | Rarely survives formatting | First-class, its own section |
+- capture a screenshot when requested by an investigation;
+- inspect a selected project with bounded, redacted reads;
+- extract traceback and error locations;
+- run safe, allowlisted diagnostics;
+- ask a configured language model for analysis;
+- verify every cited path and line against current files;
+- separate verified findings, hypotheses, evidence, and warnings;
+- propose a unified diff and optionally apply it after verification and backup.
 
----
+A model suggestion is not treated as a confirmed finding until the backend can
+verify it.
 
 ## Interface
 
-Trace is a small floating debugging console above your work. It stays compact
-until you open the investigation panel.
+1. Open the Trace panel and enter a bug report, traceback, or question.
+2. Choose **Debug** for an evidence-backed diagnosis or **Explain** for a plain
+   explanation without a proposed fix.
+3. Optionally enable **Fix it for me**. Trace writes only after its verification
+   gate passes and a `.trace-bak` backup is created.
+4. Watch the five-stage activity rail: capture, inspect, analyze, verify, report.
+5. Open the results window for **Answer**, **Code & Diff**, and **Evidence**.
 
-Open the Trace panel, describe the bug, and press <kbd>Investigate</kbd>. The
-progress rail lights up one step at a time — but only for stages the backend
-actually reported. Nothing is simulated to make it look busy.
+The compact chat icon opens a normal conversation in the Trace window. Chat does
+not read project files, run diagnostics, or claim that anything was verified.
+The gear icon opens **Model connection**. The tray menu can show Trace, open
+results, check for updates, and quit. **Tuck away** hides the panel while
+leaving Trace available from the tray.
 
-<p align="center">
-  <img src="docs/images/results-answer.png" width="720" alt="Trace results window, Answer tab">
-</p>
+## Model connections
 
-<p align="center">
-  <img src="docs/images/results-diff.png" width="720" alt="Trace results window, verified patch">
-</p>
+Trace supports Ollama and OpenAI-compatible APIs, including OpenAI, OpenRouter,
+Groq, Together, local gateways, and compatible custom services.
 
-The results window is a three-tab workspace: **Answer** for the verdict,
-**Code & Diff** for verified locations and the proposed patch, **Evidence** for
-what was collected and what is still missing.
+Open the gear icon and enter:
 
-<p align="center">
-  <sub>The result-window screenshots show the shipped Answer, Code &amp; Diff,
-  and Evidence views. The <code>shop-api</code> example project is fictional.</sub>
-</p>
+| Field | Meaning |
+|---|---|
+| Provider | Ollama or OpenAI-compatible API |
+| Model | Exact model identifier accepted by the provider |
+| API base | Provider base URL, such as `https://api.openai.com/v1` |
+| API key | Provider bearer token, when required |
 
----
+The API key travels through the Electron main process to the loopback backend;
+the renderer does not receive it. On supported systems, Trace persists the
+provider profile using Electron encrypted storage. The key field is cleared
+after saving and only a redacted status is shown.
 
-## How an investigation runs
+Saving a connection does not make a test generation request. An invalid
+endpoint, model, or key is reported when the first chat or investigation runs.
 
-Ten stages, streamed over the loopback API as server-sent events. The UI's
-five-step rail is a view onto them, not a separate progress bar:
+## Install the Windows release
 
-```
-receive  →  screenshot  →  context  →  project_root  →  error_extract
-        →  read_files  →  diagnostics  →  model_analysis  →  validate  →  report
-```
+Download the latest installer from the
+[GitHub Releases page](https://github.com/imbdy/Trace/releases). The packaged
+installer includes the Python backend, so Python is not required for normal use.
 
-The pipeline runs as an explicit agent graph (a ~200-line, stdlib-only
-runtime — same shape as LangGraph: named nodes, conditional edges, parallel
-fan-out/fan-in, bounded self-repair), so structure is auditable rather than
-buried in nested ifs:
+After installation, start Trace, open the gear icon, configure a provider, and
+submit an investigation.
 
-- **Independent collection is parallel.** Screenshot ∥ local context,
-  file reads in batches, diagnostics ∥ tests ∥ code intelligence, and
-  per-finding git enrichment all run concurrently on small bounded thread
-  pools — with sequential fallbacks and per-branch fault isolation. A slow
-  linter can no longer stall a screenshot.
-- **The model can hold more evidence.** SEARCH HITS from whole-project
-  keyword scans (parallel), symbol-definition locations, per-file outlines
-  and complexity notes, top-level `*.json` syntax checks, TODO/FIXME
-  anchors, parsed test-failure `file:line` anchors, and — when nothing
-  could be read — an honest PROJECT TREE / RECENTLY MODIFIED section for
-  orientation. Everything is real disk data; the validator still gates
-  anything the model cites from it.
-- **Malformed model JSON gets one bounded repair.** If the verdict isn't
-  valid JSON, Trace re-asks once with a JSON-only prompt. Still broken? An
-  honest low-confidence report; never a fabricated one.
-- **The reasoning phase is represented honestly.** The backend reports the
-  `model_analysis` stage while the configured provider is working; Trace does
-  not invent progress or expose hidden chain-of-thought.
-- **The graph path is in the evidence.** `Evidence` shows which nodes the
-  run actually visited (`receive → capture ∥ → … → report`), plus
-  per-branch parallel timings, so a verdict is inspectable end-to-end.
-- **`error_extract` is skipped in Explain mode**, and stack-frame files are
-  not pre-loaded — you are not debugging, you are asking what something does.
-- **`validate` is the important one.** It is what opens each cited path on disk.
-- Follow-up questions re-run a six-stage subset against the files the previous
-  report already cited (re-read in parallel), and pass through the same validator.
-
----
-
-## Install
-
-### Windows
-
-Grab the latest installer from
-[releases](https://github.com/imbdy/Trace/releases). It ships the Python backend
-as a bundled executable, so you do not need Python installed.
-
-Trace needs a model to think with. The packaged app includes an in-app model
-connection panel, so users can either connect Ollama or use an API provider
-without editing environment variables.
-
-For local Ollama, install [Ollama](https://ollama.com) and pull the default model:
+For local Ollama, install [Ollama](https://ollama.com), start it, and pull a
+model:
 
 ```powershell
 ollama serve
 ollama pull gemma4:31b-cloud
 ```
 
-### From source
+`gemma4:31b-cloud` is an Ollama cloud model. It is not local-only; submitted
+context may be processed by Ollama's cloud service. Configure a local model if
+the project cannot leave the machine.
 
-Requires Node 20+ and Python 3.10 or newer.
+## Run from source
+
+Requirements: Windows for the Electron experience, Node.js 20+, and Python
+3.10+.
 
 ```powershell
 git clone https://github.com/imbdy/Trace.git
-cd Trace
-
-cd electron
+cd Trace\electron
 npm install
 npm start -- --project-dir C:\path\to\your\project
 ```
 
-The app spawns the backend itself. To run the pieces separately:
+The Electron app supervises the Python backend. To run the backend directly:
 
 ```powershell
-pip install -e ".[screenshots]"   # optional extra: mss + Pillow for capture
-python main.py --backend-only     # loopback API on http://127.0.0.1:3777
-python main.py                    # tkinter fallback UI
+cd C:\path\to\Trace
+pip install -e ".[screenshots]"
+python main.py --backend-only
 ```
 
----
+The backend binds to `http://127.0.0.1:3777` by default. The fallback Python UI
+can be started with `python main.py`, or with `python -m trace_ui` when a
+backend is already running.
 
-## Using Trace
+## Investigation pipeline
 
-**The tray icon is the control centre.** It shows a live status line, plus
-Show Trace, Open results, Check for updates, and Quit. Once you tuck the window
-away, the tray is how you get it back.
+The backend runs a bounded agent graph:
 
-**Ask.** Open the Trace panel. Type the bug or paste the traceback.
-<kbd>Enter</kbd> submits, <kbd>Shift</kbd>+<kbd>Enter</kbd> adds a line.
-<kbd>Esc</kbd> or `fold` closes the panel.
+```text
+receive → screenshot → context → project_root → error_extract
+        → read_files → diagnostics → model_analysis → validate → report
+```
 
-**Connect a model.** Click the gear icon in the Trace header. Choose Ollama or
-**OpenAI-compatible API**, enter the model name, and for hosted providers enter
-the API base (for example `https://api.openai.com/v1`) and API key. This works
-with OpenAI, OpenRouter, Groq, Together, local gateways, and compatible custom
-endpoints. Trace keeps the key out of the renderer and stores it with the
-operating system's encrypted storage when available.
+The visible rail groups those stages into capture, inspect, analyze, verify,
+and report. Collection branches are bounded and isolated so a slow or missing
+diagnostic does not silently become model evidence. Explain mode skips traceback
+error extraction and does not propose a code fix.
 
-**Debug or Explain.** A real switch, not a label. *Debug* extracts the error,
-reads the frames from your traceback, and may propose a patch. *Explain* skips
-error extraction and asks what the code is for, then declines to propose fixes.
+Reports can include a summary and root cause, verified findings with file/line/
+excerpt/evidence/confidence, alternative hypotheses, missing information, a
+proposed diff, warnings, collected evidence, the graph path, and provenance.
 
-**Fix it for me.** Tick the box and Trace writes the patch straight to your file
-— but only after re-verifying it against the current contents on disk. The
-original is copied to `<name>.trace-bak` first. If the backup fails, the file is
-not touched at all. Unverified patches are never written, and the
-`Apply fix to files` button stays disabled.
+Follow-up questions from a completed result create a linked investigation and
+re-check the cited files.
 
-**Keep exploring.** Every report has a follow-up box. Ask about the diagnosis,
-ask about the proposed fix, keep asking — each follow-up is a separately
-verified report. Follow-ups cannot auto-fix, and do not re-capture your screen.
+## Safety and privacy
 
-**Past investigations.** The results window lists your last 50 investigations and
-searches them. Click any one to reopen that verdict, including from a previous
-run of the app.
-
-**Cancel.** The Cancel button arms itself only while a run is in flight. It
-aborts the event stream and stops the backend between stages.
-
-**Updates.** Packaged builds check GitHub Releases shortly after launch,
-download in the background, and install when Trace quits. There is no update
-prompt to click.
-
----
-
-## Privacy and safety
-
-- **The backend binds loopback only.** A non-loopback bind address is rejected
-  at startup; Trace refuses to expose itself to your network.
-- **Trace never reads your clipboard.** The capability exists in the API and is
-  hardcoded off in the desktop app.
-- **Secrets are redacted** before anything is sent: API keys, bearer tokens,
-  `sk-…`, `ghp_…` and Slack `xox…` patterns are stripped from the model payload.
-- **Screenshots live in memory plus one temp file**, which is deleted after the
-  run. They are not retained.
-- **Auto-fix is failure-closed.** No backup, no write. Writes are atomic
-  (temp file plus rename) and refused outside the project root.
-- **Scanning is bounded.** `.git`, `node_modules`, `__pycache__`, virtualenvs,
-  build output and caches are excluded; only allowlisted text extensions are read;
-  diagnostics run only allowlisted installed tools with timeouts. Project scripts
-  are never executed.
-
-> ### The default model runs in the cloud
->
-> `gemma4:31b-cloud` is an **Ollama cloud** model. It is not local-only. Code
-> excerpts, screenshots, window titles and terminal tails included in an
-> investigation may be processed by Ollama's cloud service.
->
-> Trace minimises what it sends — a 24k character budget, downscaled screenshots,
-> tail-only log output — but you should know this before you submit a proprietary
-> codebase. To stay local, pull a local model and point `TRACE_MODEL` at it.
-
----
+- The backend accepts loopback connections only; non-loopback bind addresses
+  are rejected.
+- The renderer cannot access Node.js, Electron, the filesystem, or model APIs
+  directly; it uses a narrow preload bridge.
+- Project scanning is bounded and excludes common generated, dependency, cache,
+  and virtual-environment directories.
+- Common API-key, bearer-token, GitHub-token, and Slack-token patterns are
+  redacted from model context.
+- Screenshots are held in memory and a temporary file during a run; the
+  temporary file is removed afterward.
+- Auto-fix is failure-closed: no verified diff or no backup means no write.
+  Writes are restricted to the project root and use atomic replacement.
+- Project scripts are not executed. Test output is opt-in and limited to the
+  allowlisted runner detected by Trace.
+- Provider privacy and billing follow the selected provider. Cloud models may
+  process submitted code, screenshots, and logs.
 
 ## Configuration
 
-Everything is environment-overridable. Desktop users can configure the active
-provider from the gear panel; the API key is stored separately using Electron's
-encrypted storage when the OS supports it.
+Desktop users should use Model connection. Environment variables remain useful
+for backend-only, CI, and source workflows:
 
-| Variable | Default | Meaning |
+| Variable | Default | Purpose |
 |---|---|---|
-| `TRACE_MODEL` | `gemma4:31b-cloud` | Model name |
-| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama endpoint |
-| `OLLAMA_API_KEY` | *(unset)* | Bearer token, if the endpoint needs one |
 | `TRACE_PROVIDER` | `ollama` | `ollama` or `openai-compatible` |
-| `TRACE_API_BASE` | *(unset)* | Base URL for an OpenAI-compatible provider |
-| `TRACE_BIND_HOST` | `127.0.0.1` | Must stay loopback |
+| `TRACE_MODEL` | `gemma4:31b-cloud` | Model identifier |
+| `OLLAMA_HOST` | `http://127.0.0.1:11434` | Ollama endpoint |
+| `OLLAMA_API_KEY` | unset | Ollama bearer token |
+| `TRACE_API_BASE` | unset | OpenAI-compatible API base URL |
+| `TRACE_BIND_HOST` | `127.0.0.1` | Backend bind address; loopback only |
 | `TRACE_BIND_PORT` | `3777` | Backend port |
-| `TRACE_CONNECT_TIMEOUT_S` | `5` | Connect timeout |
-| `TRACE_READ_TIMEOUT_S` | `120` | Read timeout — raise for large models |
-| `TRACE_ALLOW_FILE_EDITS` | `1` | `0` disables every auto-fix and apply-fix write |
-| `TRACE_ALLOW_TESTS` | `0` | `1` opts into allowlisted test-runner output |
-| `TRACE_HISTORY` | `1` | `0` disables the investigation journal |
-| `TRACE_HISTORY_MAX` | `500` | Journal entries kept |
-| `TRACE_HISTORY_DIR` | `%LOCALAPPDATA%\Trace\history` | Where reports are written |
-| `TRACE_PYTHON` | `python` | Interpreter the desktop app uses to spawn the backend |
+| `TRACE_CONNECT_TIMEOUT_S` | `5` | Connection timeout |
+| `TRACE_READ_TIMEOUT_S` | `120` | Model response timeout |
+| `TRACE_ALLOW_FILE_EDITS` | `1` | Set `0` to disable writes |
+| `TRACE_ALLOW_TESTS` | `0` | Set `1` to allow the safe test runner |
+| `TRACE_HISTORY` | `1` | Set `0` to disable the investigation journal |
+| `TRACE_HISTORY_MAX` | `500` | Maximum journal entries |
+| `TRACE_HISTORY_DIR` | platform default | Report journal location |
+| `TRACE_PYTHON` | `python` | Python executable used by Electron |
 
-Useful Electron flags: `--project-dir DIR`, `--backend-port N`, `--user-data-dir DIR`,
-and `--smoke` for the headless self-test.
+Useful Electron flags are `--project-dir DIR`, `--backend-port N`,
+`--user-data-dir DIR`, and `--smoke`.
 
----
+## Known limitations
 
-## What Trace does not do
+- OpenAI-compatible provider calls currently use the non-streaming chat path.
+- Provider settings are saved without a test generation request.
+- Results history displays the newest 50 entries; the backend journal can retain
+  more according to `TRACE_HISTORY_MAX`.
+- `Open at line N` delegates to the OS default file handler; line jumping
+  depends on editor integration.
+- The backend supports dry-run fix responses, but the desktop UI does not yet
+  expose a separate dry-run preview button.
+- `.trace-bak` files are not cleaned up automatically.
+- The published installer currently targets Windows.
 
-Stated plainly, because a debugging tool that overstates itself is the exact
-problem it exists to solve:
+## Backend API
 
-- **Limited settings UI.** Model provider, model, API base and API key are
-  configurable in-app. Perch position, quiet hours and notification preferences
-  still require editing `trace-settings.json` in the user-data directory.
-- **`Open at line N` uses your OS default handler.** It opens the file; jumping
-  to the line depends on editor integration that is not implemented.
-- **No dry-run preview.** The backend supports `dry_run`, but there is no
-  preview button — apply is verified server-side at the moment of writing.
-- **History is capped at 50** with no pagination.
-- **Backups are never cleaned up.** Delete `*.trace-bak` files yourself.
-- **The window is not draggable and not click-through.**
-- **Provider connectivity is lazy.** Trace saves provider settings without
-  making a test generation request; an invalid endpoint or key is reported when
-  the first chat or investigation runs.
-- **Only Windows installers are published.**
+The Electron app talks to the loopback API under `/api/v1`:
 
----
+```text
+GET  /health
+GET  /config
+POST /config
+POST /investigations
+GET  /investigations
+GET  /investigations/{id}
+GET  /investigations/{id}/events
+POST /investigations/{id}/cancel
+POST /investigations/{id}/follow-up
+POST /investigations/{id}/apply-fix
+POST /open-file
+POST /chat
+```
+
+See [docs/API_CONTRACT.md](docs/API_CONTRACT.md) for request and response
+shapes.
 
 ## Development
 
 ```powershell
-python -m unittest discover -s tests -v     # 164 tests
-cd electron; npm test                        # node --test
-cd electron; npm run build                   # tsc + asset copy
-cd electron; npm run smoke                   # headless end-to-end self-test
+# Python tests
+python -m pytest -q
+
+# Electron build and tests
+cd electron
+npm run build
+npm test
+
+# Package a Windows installer
+npm run dist:win
 ```
 
-### Layout
+Repository layout:
 
-```
-trace_backend/          L3 model client  →  L2 orchestrator (agent graph)  →  L1 HTTP host
-  agent_graph.py          stdlib-only graph runtime: nodes, conditional
-                          routes, parallel fan-out/fan-in, cycle guard,
-                          visited-node trace
-  ollama_client.py        provider client for Ollama and compatible APIs
-  investigation_engine.py the 10-stage pipeline declared as graph nodes
-  validator.py            checks every cited path and line
-  project_inspector.py    bounded, redacted project reads
-  code_tools.py           search/outline/symbols/recency/tree/config-checks/
-                          annotations/test-runner helpers (never executes
-                          project scripts)
-  server.py               loopback API, SSE, cancel, apply-fix
-
-electron/src/
-  main/                   window, tray, backend supervisor, IPC
-  preload.ts              the entire renderer-facing API surface
-  renderer/neo/           the floating Trace panel
-  renderer/results.ts     the results workspace
-
-trace_ui/               zero-dependency tkinter fallback
-docs/API_CONTRACT.md    every route, request and response shape
-docs/ARCHITECTURE.md    the component split
+```text
+trace_backend/          loopback API, model client, agent graph, validation
+trace_ui/               dependency-light Python fallback UI
+electron/src/main/      window, tray, backend supervisor, IPC
+electron/src/renderer/  Trace panel and results workspace
+tests/                  Python contracts and integration tests
+electron/test/          Electron utility tests
+docs/                   API and architecture references
 ```
 
-Layering is enforced by tests, not convention: `tests/test_layering.py` fails the
-build if the model client reaches into the orchestrator, or the server reaches
-into the evidence layer. `tests/test_frontend_guards.py` asserts the renderer
-never imports Electron, never names a backend URL, and never touches Ollama
-directly.
+Layering and frontend-boundary tests protect the separation between the
+renderer, Electron main process, backend, evidence collection, and model client.
 
-### The API
-
-Every capability the UI has is a documented loopback route. Start the backend
-and talk to it with curl:
-
-```powershell
-curl -X POST http://127.0.0.1:3777/api/v1/investigations `
-  -H "Content-Type: application/json" `
-  -d '{"request_text":"App crashes on start","project_dir":"C:/path/to/project"}'
-# → {"investigation_id":"inv-..."}
-
-curl -N http://127.0.0.1:3777/api/v1/investigations/inv-.../events   # SSE
-curl http://127.0.0.1:3777/api/v1/investigations/inv-...             # status
-```
-
-Full contract in [docs/API_CONTRACT.md](docs/API_CONTRACT.md).
-
----
-
-<div align="center">
-  <sub>Trace is independent software. It has no connection to, and no knowledge
-  of, any other product — it only reads the project you point it at.</sub>
-</div>
+See [RELEASE_NOTES.md](RELEASE_NOTES.md) for the current release summary and
+[CHANGELOG.md](CHANGELOG.md) for version history.
