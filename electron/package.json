@@ -3,7 +3,7 @@
   "version": "0.4.3",
   "private": true,
   "author": "imbdy",
-  "description": "Trace independent debugging companion (Electron frontend, Python backend)",
+  "description": "Trace evidence-first debugging console (Electron frontend, Python backend)",
   "main": "dist/main/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-assets.js",
