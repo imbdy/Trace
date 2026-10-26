@@ -1,10 +1,27 @@
+<div align="center">
+
+<img src="assets/icons/trace-256.png" width="96" alt="Trace logo">
+
 # Trace
 
-Trace is an evidence-first Windows desktop debugging console. Describe a bug,
-let Trace collect bounded project evidence, and receive a report whose file
-paths and line numbers are checked against the files on disk.
+### Debugging with receipts.
 
-Current release: **0.4.3**.
+Describe the bug. Trace gathers bounded evidence, checks every cited file and
+line against disk, and separates verified findings from hypotheses.
+
+[![Release](https://img.shields.io/github/v/release/imbdy/Trace?style=for-the-badge&color=8faeff)](https://github.com/imbdy/Trace/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows-20232a?style=for-the-badge&logo=windows)](https://github.com/imbdy/Trace/releases)
+[![Tests](https://img.shields.io/badge/tests-226%20passing-6fce95?style=for-the-badge)](https://github.com/imbdy/Trace/actions)
+
+**Current release: 0.4.3** · **Ollama + OpenAI-compatible providers**
+
+</div>
+
+<p align="center">
+  <img src="docs/images/results-tour.gif" width="900" alt="Trace results walkthrough">
+</p>
+
+<p align="center"><sub>A short visual tour of Trace's Answer and Code &amp; Diff results views.</sub></p>
 
 ## What Trace does
 
@@ -38,6 +55,22 @@ not read project files, run diagnostics, or claim that anything was verified.
 The gear icon opens **Model connection**. The tray menu can show Trace, open
 results, check for updates, and quit. **Tuck away** hides the panel while
 leaving Trace available from the tray.
+
+## See it in action
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/results-answer.png" alt="Trace Answer results view"></td>
+    <td width="50%"><img src="docs/images/results-diff.png" alt="Trace verified Code and Diff results view"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Answer — diagnosis, confidence, and what Trace knows.</sub></td>
+    <td align="center"><sub>Code &amp; Diff — verified locations and the proposed patch.</sub></td>
+  </tr>
+</table>
+
+> Video demos can be attached to the GitHub release page so the README stays
+> lightweight and the release always shows the matching build.
 
 ## Model connections
 
