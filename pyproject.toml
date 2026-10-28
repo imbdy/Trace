@@ -7,6 +7,7 @@ dependencies = []
 
 [project.optional-dependencies]
 screenshots = ["mss", "Pillow"]
+dev = ["pytest"]
 
 [project.scripts]
 trace-backend = "trace_backend.server:run_server"
