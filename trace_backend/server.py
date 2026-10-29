@@ -3,6 +3,7 @@
 Endpoints (see docs/API_CONTRACT.md):
   GET  /api/v1/health
   GET  /api/v1/config                      (redacted)
+  POST /api/v1/config/test                 probe the model connection
   POST /api/v1/investigations               start → {investigation_id}
   GET  /api/v1/investigations               history list, newest-first
   GET  /api/v1/investigations/{id}          status / result (journal fallback)
@@ -47,6 +48,9 @@ from .schemas import (
 # TERMINAL event is always delivered (see _offer) so nobody waits forever.
 TERMINAL_STATUSES = ("done", "error", "cancelled")
 _SUBSCRIBER_QUEUE_MAX = 200
+# Connection-test probe: one "Say OK" round-trip must never hang the settings
+# panel. A provider slower than this fails the test honestly.
+PROBE_TIMEOUT_S = 20.0
 # Finished investigations kept in memory; older ones live in the history
 # journal (when enabled) and are recallable from there.
 _MAX_FINISHED_JOBS = 100
@@ -377,6 +381,49 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                 ).lower()]
             return {"investigations": entries, "count": len(entries)}
 
+        def _test_provider_connection(self):
+            """POST /api/v1/config/test — the settings panel's probe.
+
+            One minimal "Say OK" round-trip against the provider. The body is
+            optional and is NEVER persisted: fields mirror POST /config
+            (provider, model, api_base, api_key), omitted fields fall back to
+            the running configuration, so a bare request re-tests the live
+            connection. Returns {"ok": true, "latency_ms": N} when the model
+            answers and {"ok": false, "error": "..."} when it does not (200
+            either way; 400 only for an invalid request body).
+            """
+            data = self._read_json()
+
+            def field(name: str, fallback: str) -> str:
+                """An ABSENT body field falls back to the running config; an
+                explicitly empty one means empty (then validation refuses)."""
+                value = data.get(name)
+                return fallback if value is None else str(value)
+
+            provider = field("provider", config.provider).strip().lower()
+            model = field("model", config.ollama_model).strip()
+            api_base = field("api_base", config.api_base or "").strip().rstrip("/")
+            api_key = field("api_key", config.ollama_api_key or "")
+            if provider not in ("ollama", "openai-compatible") or not model:
+                return self._send_json(
+                    error_envelope("bad_request", "Choose a provider and model."), 400)
+            if provider == "openai-compatible" \
+                    and not api_base.startswith(("http://", "https://")):
+                return self._send_json(
+                    error_envelope("bad_request", "API base must be an http(s) URL."), 400)
+            probe_cfg = dataclasses.replace(
+                config, provider=provider, ollama_model=model,
+                api_base=api_base or None, ollama_api_key=api_key or None,
+                ollama_host=api_base or config.ollama_host)
+            started = time.monotonic()
+            try:
+                store.engine.ollama.probe(probe_cfg, timeout=PROBE_TIMEOUT_S)
+            except Exception as e:  # transport, auth or model errors all mean "not connected"
+                message = str(e).strip() or type(e).__name__
+                return self._send_json({"ok": False, "error": message[:500]})
+            latency_ms = int((time.monotonic() - started) * 1000)
+            return self._send_json({"ok": True, "latency_ms": latency_ms})
+
         # -- routes -------------------------------------------------------
         def do_GET(self):
             parsed = urllib.parse.urlparse(self.path)
@@ -450,6 +497,8 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
         def do_POST(self):
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path.rstrip("/") or "/"
+            if path == "/api/v1/config/test":
+                return self._test_provider_connection()
             if path == "/api/v1/config":
                 data = self._read_json()
                 provider = str(data.get("provider", "ollama")).strip().lower()
