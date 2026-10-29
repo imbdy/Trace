@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import http.client
 import json
 import socket
@@ -201,6 +202,23 @@ class OllamaClient:
         messages.append(user_msg)
         return self.chat(messages, stream=stream, on_token=on_token,
                          cancel_event=cancel_event, timeout=timeout)
+
+    # -- connection test ----------------------------------------------------
+    def probe(self, config: TraceConfig | None = None,
+              *, timeout: float | None = None) -> str:
+        """One minimal ``Say OK`` round-trip for a connection test.
+
+        ``config`` (the provider/model/host/api-base/key under test) is
+        honoured for this call only: the client is copied, never mutated, so
+        a probe can run against unsaved settings while a real investigation
+        keeps using the live ones. Returns the model's reply; raises an
+        OllamaError family member on any failure.
+        """
+        tester = copy.copy(self)
+        tester.config = config or self.config
+        return tester.chat([{"role": "user", "content": "Say OK"}],
+                           timeout=timeout if timeout is not None
+                           else self.config.read_timeout_s)
 
     # -- transport ----------------------------------------------------------
     def _post(self, path: str, payload: dict, *, timeout: float,

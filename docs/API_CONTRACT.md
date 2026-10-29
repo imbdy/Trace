@@ -204,3 +204,35 @@ dependent); response notes this honestly. 404 if file missing.
 
 - health → `{"ok": true, "service": "trace", "time": ...}`
 - config → redacted config + cloud note (`has_api_key` boolean only).
+
+## POST /api/v1/config/test → 200
+
+The settings panel's "Test connection" probe: one minimal `"Say OK"`
+round-trip against the provider, nothing else (no project context, no
+streaming, no report).
+
+Request — optional, mirrors `POST /config` and is never persisted; omitted
+fields fall back to the running configuration:
+
+```json
+{"provider": "ollama | openai-compatible",
+ "model": "gemma4:31b-cloud (required-ish; falls back to the saved one)",
+ "api_base": "https://api.openai.com/v1 (openai-compatible only)",
+ "api_key": "optional; falls back to the saved one"}
+```
+
+Success:
+
+```json
+{"ok": true, "latency_ms": 412}
+```
+
+Failure (model unreachable, bad key, wrong model name — always HTTP 200 so
+the UI can render the message directly):
+
+```json
+{"ok": false, "error": "Cannot reach Ollama at http://127.0.0.1:11434: ..."}
+```
+
+400 `bad_request` only for an invalid request body (unknown provider, empty
+model, openai-compatible without an http(s) api_base).
