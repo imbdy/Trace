@@ -152,5 +152,50 @@ class TestOllamaClient(unittest.TestCase):
                 client.generate("hi", stream=True)
 
 
+class TestProbe(unittest.TestCase):
+    """probe(): the connection-test round-trip behind POST /config/test."""
+
+    def test_probe_targets_the_override_config_and_stays_read_only(self):
+        live = OllamaClient(_cfg())
+        candidate = TraceConfig(ollama_host="http://127.0.0.1:11434",
+                                provider="openai-compatible",
+                                api_base="http://127.0.0.1:9999/v1",
+                                ollama_model="probe-model")
+        seen: list = []
+
+        def cap(req, *a, **kw):
+            seen.append(req)
+            return FakeResp(json.dumps(
+                {"choices": [{"message": {"content": "OK"}}]}).encode())
+
+        with mock.patch("urllib.request.urlopen", side_effect=cap):
+            out = live.probe(candidate)
+        self.assertEqual(out, "OK")
+        # The probe hit the CANDIDATE endpoint with the candidate model.
+        url, = (r.full_url for r in seen)
+        self.assertTrue(url.startswith("http://127.0.0.1:9999/v1/chat/completions"))
+        body = json.loads(seen[0].data.decode("utf-8"))
+        self.assertEqual(body["model"], "probe-model")
+        self.assertEqual(body["messages"][-1]["content"], "Say OK")
+        # The live client was never mutated.
+        self.assertEqual(live.config.api_base, None)
+        self.assertEqual(live.config.provider, "ollama")
+
+    def test_probe_defaults_to_the_live_config(self):
+        client = OllamaClient(_cfg())
+        with mock.patch("urllib.request.urlopen",
+                        return_value=FakeResp(b'{"message": {"content": "OK"}}')) as m:
+            out = client.probe()
+        self.assertEqual(out, "OK")
+        self.assertIn("/api/chat", m.call_args[0][0].full_url)
+
+    def test_probe_failure_raises_the_mapped_error(self):
+        client = OllamaClient(_cfg())
+        with mock.patch("urllib.request.urlopen",
+                        side_effect=ConnectionRefusedError("refused")):
+            with self.assertRaises(OllamaConnectionError):
+                client.probe()
+
+
 if __name__ == "__main__":
     unittest.main()
