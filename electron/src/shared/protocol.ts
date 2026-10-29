@@ -69,6 +69,13 @@ export interface InvestigationReport {
 
 export type InvestigationState = "running" | "done" | "error" | "cancelled";
 
+// Settings-panel "Test connection" probe (POST /config/test).
+export interface ProviderProbe {
+  ok: boolean;
+  latency_ms?: number;
+  error?: string;
+}
+
 export interface InvestigationStatus {
   investigation_id: string;
   status: InvestigationState;
