@@ -169,6 +169,7 @@
       setChatShown(false);
       if (!Sh.open) api.expand();
       var bridge = window.trace;
+      testBadge(null); // stale results must not pose as a live verdict
       if (bridge && bridge.getProviderConfig) bridge.getProviderConfig().then(function (c) {
         var kind = document.getElementById('provider-kind');
         var model = document.getElementById('provider-model');
@@ -190,6 +191,42 @@
     var kind = document.getElementById('provider-kind');
     var row = document.getElementById('provider-base-row');
     if (row) row.hidden = !kind || kind.value !== 'openai-compatible';
+    testBadge(null); // a provider switch invalidates any probe result
+  }
+  /* ---- connection test: probe the typed-in provider before saving ---- */
+  function testBadge(state, text) {
+    var el = document.getElementById('provider-test-result');
+    if (!el) return;
+    if (!state) { el.hidden = true; el.textContent = ''; el.className = ''; return; }
+    el.hidden = false;
+    el.textContent = text || '';
+    el.className = 'test ' + state; // ok | fail | testing (spinner is CSS)
+  }
+  function testProvider() {
+    var kind = document.getElementById('provider-kind');
+    var model = document.getElementById('provider-model');
+    var base = document.getElementById('provider-base');
+    var key = document.getElementById('provider-key');
+    var btn = document.getElementById('provider-test');
+    if (!kind || !model || !window.trace || !window.trace.testProviderConnection) return;
+    if (!String(model.value || '').trim()) { testBadge('fail', '✗ model required'); return; }
+    if (btn) btn.disabled = true;
+    testBadge('testing', 'testing connection…');
+    window.trace.testProviderConnection({
+      provider: kind.value, model: model.value,
+      api_base: base ? base.value : '', api_key: key ? key.value : ''
+    }).then(function (res) {
+      if (res && res.ok) {
+        testBadge('ok', '✓ Connected (' + Number(res.latency_ms || 0) + 'ms)');
+        providerStatus('ready to test again');
+      } else {
+        testBadge('fail', '✗ ' + ((res && res.error) || 'connection failed'));
+        providerStatus('not connected');
+      }
+    }).catch(function () {
+      testBadge('fail', '✗ connection failed');
+      providerStatus('not connected');
+    }).finally(function () { if (btn) btn.disabled = false; });
   }
   function saveProvider() {
     var kind = document.getElementById('provider-kind');
@@ -385,6 +422,7 @@
     setSettingsShown(!s || s.hidden);
   });
   wire('provider-save', saveProvider);
+  wire('provider-test', testProvider);
   var providerKind = document.getElementById('provider-kind');
   if (providerKind) providerKind.addEventListener('change', providerKindChanged);
   wire('chat-send', function () { chatSend(); });
