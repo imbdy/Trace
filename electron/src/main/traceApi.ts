@@ -103,6 +103,15 @@ export class TraceApi {
     return payload;
   }
 
+  // Settings-panel "Test connection": the backend fires one minimal "Say OK"
+  // round-trip at the provider. The result is {ok, latency_ms?} / {ok: false,
+  // error} — HTTP 200 either way; ApiError only for a down backend or an
+  // invalid request body.
+  async testProviderConnection(config: { provider?: string; model?: string; api_base?: string; api_key?: string }): Promise<Record<string, unknown>> {
+    const { payload } = await this.request("POST", "/config/test", config ?? {});
+    return payload;
+  }
+
   async providerConfig(): Promise<Record<string, unknown>> {
     const { payload } = await this.request("GET", "/config");
     return payload;

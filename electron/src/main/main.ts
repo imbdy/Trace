@@ -31,7 +31,7 @@ const reportExport = require("./report-export") as {
 
 import { BackendManager } from "./backend";
 import { ApiError, TraceApi } from "./traceApi";
-import { InvestigationStatus, KNOWN_STAGES, ProgressEvent } from "../shared/protocol";
+import { InvestigationStatus, KNOWN_STAGES, ProgressEvent, ProviderProbe } from "../shared/protocol";
 
 // Ambient cluster: 336px leaf + shadow pad, face row ~170px tall. The window
 // overlaps the top edge (see placement OVERHANG) so it hangs off it.
@@ -671,6 +671,28 @@ function setupIpc(): void {
     }
   });
 
+  // "Test connection": one backend probe round-trip against the provider as
+  // currently typed in the panel — nothing is saved. Read-only, safe to run
+  // during an investigation (the backend's probe never disturbs a live run).
+  ipcMain.handle("trace:test-connection", async (_e, raw: Record<string, unknown>) => {
+    if (!(await backend.health())) {
+      const ok = await backend.ensure(__dirname);
+      if (!ok) return { ok: false as const, error: "Backend unavailable — could not start it." };
+    }
+    const probe = {
+      provider: raw && raw.provider === "openai-compatible" ? "openai-compatible" : "ollama",
+      model: String(raw && raw.model || "").trim().slice(0, 200),
+      api_base: String(raw && raw.api_base || "").trim().slice(0, 500),
+      api_key: String(raw && raw.api_key || "").trim().slice(0, 1000),
+    };
+    if (!probe.model) return { ok: false as const, error: "Model is required to test the connection." };
+    try {
+      return await api.testProviderConnection(probe) as unknown as ProviderProbe;
+    } catch (e) {
+      const err = e as ApiError;
+      return { ok: false as const, error: `${err.message || "Test failed."}${err.hint ? " " + err.hint : ""}` };
+    }
+  });
   ipcMain.handle("trace:cancel", async () => {
     if (!run) return { ok: false as const };
     run.abort.abort();

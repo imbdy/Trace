@@ -13,6 +13,8 @@ export interface TraceBridge {
   getProviderConfig: () => Promise<Record<string, unknown>>;
   configureProvider: (config: { provider: string; model: string; api_base?: string; api_key?: string }) =>
     Promise<Record<string, unknown>>;
+  testProviderConnection: (config?: { provider?: string; model?: string; api_base?: string; api_key?: string }) =>
+    Promise<Record<string, unknown>>;
   cancel: () => Promise<{ ok: boolean }>;
   applyFix: (id: string, dryRun?: boolean) => Promise<Record<string, unknown>>;
   showResults: () => Promise<{ ok: boolean }>;
@@ -34,6 +36,7 @@ const api: TraceBridge = {
   chat: (message, history) => ipcRenderer.invoke("trace:chat", message, history ?? []),
   getProviderConfig: () => ipcRenderer.invoke("trace:get-provider-config"),
   configureProvider: (config) => ipcRenderer.invoke("trace:configure-provider", config),
+  testProviderConnection: (config) => ipcRenderer.invoke("trace:test-connection", config ?? {}),
   cancel: () => ipcRenderer.invoke("trace:cancel"),
   applyFix: (id, dryRun) => ipcRenderer.invoke("trace:apply-fix", id, !!dryRun),
   showResults: () => ipcRenderer.invoke("trace:show-results"),
