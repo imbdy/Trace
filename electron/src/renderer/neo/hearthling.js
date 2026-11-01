@@ -1,4 +1,4 @@
-﻿// Trace face: Neo hearthling transplant, craft intact. See Neo project.
+// Trace face: Neo hearthling transplant, craft intact. See Neo project.
 //
 // Design lineage: interaction philosophy and animation techniques studied
 // from Coucou's Mochi (MIT-licensed code; its name, artwork and sounds stay

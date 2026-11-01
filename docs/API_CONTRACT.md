@@ -200,6 +200,33 @@ file" button). Request: `{"dry_run": false}`. Response on success:
 Opens via OS default handler. `line` is best-effort (editor integration
 dependent); response notes this honestly. 404 if file missing.
 
+## POST /api/v1/chat → 200
+
+Plain conversation: a single model round-trip. No evidence, no tools, no
+verification — the reply is chat, not a report.
+
+Request:
+
+```json
+{"message": "hello",
+ "history": [{"role": "user", "content": "earlier bubble"},
+             {"role": "assistant", "content": "earlier reply"}]}
+```
+
+- `message` is required (400 `bad_request` when missing) and capped at 8000
+  characters (400 when longer).
+- `history` is optional. Only `user`/`assistant` entries are kept and every
+  entry is truncated to 4000 characters.
+
+Success:
+
+```json
+{"reply": "plain text the UI can show as a bubble"}
+```
+
+Model failure (unreachable endpoint, bad key, wrong model name) is HTTP 502
+with an `ollama_error` envelope.
+
 ## GET /api/v1/health · GET /api/v1/config
 
 - health → `{"ok": true, "service": "trace", "time": ...}`

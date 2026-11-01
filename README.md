@@ -11,7 +11,7 @@ line against disk, and separates verified findings from hypotheses.
 
 [![Release](https://img.shields.io/github/v/release/imbdy/Trace?style=for-the-badge&color=8faeff)](https://github.com/imbdy/Trace/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows-20232a?style=for-the-badge&logo=windows)](https://github.com/imbdy/Trace/releases)
-[![Tests](https://img.shields.io/badge/tests-226%20passing-6fce95?style=for-the-badge)](https://github.com/imbdy/Trace/actions)
+[![Tests](https://img.shields.io/badge/tests-233%20passing-6fce95?style=for-the-badge)](https://github.com/imbdy/Trace/actions)
 
 **Current release: 0.4.3** · **Ollama + OpenAI-compatible providers**
 
