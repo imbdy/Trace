@@ -46,7 +46,7 @@ interface TraceWindowBridge {
   followUp: (parentId: string, text: string) => Promise<{ ok: boolean; id?: string; reason?: string }>;
   chat: (message: string, history?: { role: string; content: string }[]) =>
     Promise<{ ok: boolean; reply?: string; reason?: string; error?: string }>;
-  history: (query?: string) => Promise<Record<string, unknown>[] | null>;
+  history: (query?: string, limit?: number) => Promise<Record<string, unknown>[] | null>;
   showHistory: (id: string) => Promise<{ ok: boolean; reason?: string }>;
   onReport: (cb: (status: unknown) => void) => void;
 }

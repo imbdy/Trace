@@ -209,8 +209,9 @@ Useful Electron flags are `--project-dir DIR`, `--backend-port N`,
 
 - OpenAI-compatible provider calls currently use the non-streaming chat path.
 - Provider settings are saved without a test generation request.
-- Results history displays the newest 50 entries; the backend journal can retain
-  more according to `TRACE_HISTORY_MAX`.
+- Results history shows the newest 50 entries by default; **Show older**
+  widens the view (and the search depth) up to the journal cap
+  (`TRACE_HISTORY_MAX`).
 - `Open at line N` delegates to the OS default file handler; line jumping
   depends on editor integration.
 - `.trace-bak` files are not cleaned up automatically.

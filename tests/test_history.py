@@ -295,6 +295,38 @@ class TestHistoryRecallOverHttp(unittest.TestCase):
             child_done = self._wait_done(18794, child["investigation_id"])
             self.assertEqual(child_done["report"]["follow_up_of"], parent_id)
 
+    def test_search_depth_grows_with_limit(self):
+        """``q`` scans at least 500 entries; a larger ``limit`` deepens it.
+
+        The UI's "show older" widens its window through ``limit`` — the same
+        parameter must also widen how far a search reaches, or older entries
+        stay invisible even when the user asked for them.
+        """
+        with tempfile.TemporaryDirectory() as td:
+            history_dir = Path(td) / "history"
+            journal = HistoryJournal(str(history_dir), max_entries=600)
+            for i in range(505):
+                inv_id = f"inv-{i:04d}"
+                payload = _payload(inv_id, created_at=1000.0 + i)
+                if i == 0:  # the deepest entry: older than the default window
+                    payload["report"]["summary"] = "zebra-old deepest entry"
+                journal.record(inv_id, payload)
+            config = TraceConfig(
+                bind_host="127.0.0.1", bind_port=18795,
+                ollama_host="http://127.0.0.1:11434",
+                history_dir=str(history_dir), history_max_entries=600)
+            engine = InvestigationEngine(config, ollama=StubOllama())  # type: ignore[arg-type]
+            self._serve(config, engine)
+            # Default depth (500): the oldest entry is beyond the window.
+            _, plain = self._get(18795, "/api/v1/investigations?q=zebra-old")
+            self.assertEqual(plain["count"], 0)
+            # A larger limit deepens the search and finds it.
+            _, deep = self._get(18795,
+                                "/api/v1/investigations?q=zebra-old&limit=600")
+            self.assertEqual(deep["count"], 1)
+            self.assertEqual(deep["investigations"][0]["investigation_id"],
+                             "inv-0000")
+
     def test_recall_after_restart_over_http(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)

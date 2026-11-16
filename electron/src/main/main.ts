@@ -708,8 +708,12 @@ function setupIpc(): void {
 
   ipcMain.handle("trace:current", async () => ({ id: run ? run.id : null }));
 
-  ipcMain.handle("trace:history", async (_e, query: string) => {
-    try { return await api.history(50, typeof query === "string" ? query : ""); }
+  ipcMain.handle("trace:history", async (_e, query: string, limit?: number) => {
+    // The UI drives its own window size ("show older"): cap hard enough that
+    // a runaway renderer cannot make the journal scan unbounded.
+    const n = typeof limit === "number" && Number.isFinite(limit) && limit > 0
+      ? Math.min(Math.floor(limit), 5000) : 50;
+    try { return await api.history(n, typeof query === "string" ? query : ""); }
     catch { return null; } // null = backend down (distinct from "no history")
   });
 

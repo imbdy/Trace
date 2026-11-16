@@ -174,11 +174,15 @@ Prioritized, actionable items derived from documented limitations and current im
       written”). Unverified patches keep both buttons disabled. README
       limitation bullet removed.
 
-2. **Results history UX: limited visibility/search depth**
-   - **Problem:** README notes results history displays newest 50 entries while backend journal can retain more (`TRACE_HISTORY_MAX`), and `GET /investigations` supports `limit`/`q`.
-   - **Why:** Hard to find older investigations in long sessions.
-   - **Likely files:** `electron/src/renderer/results.ts`, `electron/src/main/traceApi.ts`, `trace_backend/server.py`/`history.py` (only if API changes needed), `trace_ui/app.py`/`results_window.py` as applicable.
-   - **Done when:** Users can access/search beyond the current cap (pagination/load-more or configurable view) without breaking recall semantics; empty vs unavailable states remain honest.
+2. **Results history UX: limited visibility/search depth** — ✅ DONE
+    - Implemented: results history bar paginates — “Show older” widens the
+      window by 50 at a time by passing `limit` through the existing
+      `GET /investigations?limit&q` contract (preload/`trace:history` now
+      forward the UI’s limit, capped at 5000). Backend search depth is now
+      `max(500, limit)` so deep windows also search deeper
+      (`trace_backend/server.py` `_history_list`). Short pages hide the
+      button; unavailable vs empty states unchanged. Test:
+      `tests/test_history.py::test_search_depth_grows_with_limit`.
 
 3. **Open-at-line reliability/editor integration**
    - **Problem:** `POST /open-file` opens via OS default handler; line navigation is best-effort/editor-dependent and currently reported honestly but not integrated.

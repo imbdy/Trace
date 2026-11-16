@@ -362,7 +362,12 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                 return {}
 
         def _history_list(self, query: str) -> dict:
-            """GET /api/v1/investigations?limit=N — newest-first summaries."""
+            """GET /api/v1/investigations?limit=N&q=… — newest-first summaries.
+
+            ``limit`` is also the search depth: a ``q`` filter scans at least
+            the newest 500 entries, and deeper when the UI asks for more, so
+            "show older" keeps working while a search is active.
+            """
             limit = 50
             needle = ""
             try:
@@ -373,7 +378,8 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                     limit = int(raw)
             except ValueError:
                 limit = 50  # a bogus limit must never break the listing
-            entries = store.list_history(500 if needle else limit)
+            depth = max(500, limit) if needle else limit
+            entries = store.list_history(depth)
             if needle:
                 entries = [entry for entry in entries if needle in " ".join(
                     str(entry.get(key, "")) for key in

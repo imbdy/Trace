@@ -19,7 +19,7 @@ export interface TraceBridge {
   applyFix: (id: string, dryRun?: boolean) => Promise<Record<string, unknown>>;
   showResults: () => Promise<{ ok: boolean }>;
   current: () => Promise<{ id: string | null }>;
-  history: (query?: string) => Promise<Record<string, unknown>[] | null>;
+  history: (query?: string, limit?: number) => Promise<Record<string, unknown>[] | null>;
   showHistory: (id: string) => Promise<{ ok: boolean; reason?: string }>;
   openFile: (path: string, line?: number) => Promise<Record<string, unknown>>;
   saveReport: (status: unknown) => Promise<{ ok: boolean; path?: string; reason?: string; error?: string }>;
@@ -41,7 +41,7 @@ const api: TraceBridge = {
   applyFix: (id, dryRun) => ipcRenderer.invoke("trace:apply-fix", id, !!dryRun),
   showResults: () => ipcRenderer.invoke("trace:show-results"),
   current: () => ipcRenderer.invoke("trace:current"),
-  history: (query) => ipcRenderer.invoke("trace:history", query ?? ""),
+  history: (query, limit) => ipcRenderer.invoke("trace:history", query ?? "", typeof limit === "number" ? limit : undefined),
   showHistory: (id) => ipcRenderer.invoke("trace:show-history", id),
   openFile: (path, line) => ipcRenderer.invoke("trace:open-file", path, line),
   saveReport: (status) => ipcRenderer.invoke("trace:save-report", status),

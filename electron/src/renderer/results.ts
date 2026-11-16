@@ -84,10 +84,15 @@ function historyBar(): HTMLElement {
   // dropped instead of overwriting a newer view.
   let searchToken = 0;
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
+  // How many entries the current window shows. The backend journal can hold
+  // more than the initial view ("show older" widens the window; the search
+  // depth grows with it). A page exactly filling the window keeps the
+  // affordance; a short page means everything is visible and it disappears.
+  let visible = 50;
   const refresh = async (): Promise<void> => {
     const token = ++searchToken;
     list.replaceChildren(el("span", "muted", "Loading history…"));
-    const entries = await window.trace.history(search.value).catch(() => null);
+    const entries = await window.trace.history(search.value, visible).catch(() => null);
     if (token !== searchToken) return;
     list.replaceChildren();
     // null (backend down) and [] (nothing recorded) are different states —
@@ -110,6 +115,12 @@ function historyBar(): HTMLElement {
       button.append(el("span", "history-summary", summary), el("span", "history-date", date));
       button.addEventListener("click", () => void window.trace.showHistory(id));
       list.appendChild(button);
+    }
+    if (entries.length >= visible) {
+      const more = el("button", "history-more", "Show older") as HTMLButtonElement;
+      more.setAttribute("aria-label", `Show older investigations (showing the newest ${visible})`);
+      more.addEventListener("click", () => { visible += 50; void refresh(); });
+      list.appendChild(more);
     }
   };
   // Debounce keystrokes so the journal is not re-read on every character;
