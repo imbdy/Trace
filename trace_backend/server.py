@@ -19,7 +19,11 @@ Binds to 127.0.0.1 only. Never expose to the network.
 from __future__ import annotations
 
 import json
+import os
 import queue
+import re
+import shlex
+import shutil
 import subprocess
 import sys
 import threading
@@ -312,23 +316,100 @@ class InvestigationStore:
         return True
 
 
+# Line-aware editors, tried in order (first found on PATH wins). Each entry
+# is (display name, PATH executable, argv template WITH a line, template
+# WITHOUT one); {path} and {line} are substituted, never interpreted by a
+# shell. When no editor matches, the OS default handler opens the file and
+# the response says so honestly — line numbers are never claimed then.
+_LINE_EDITORS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
+    ("VS Code", "code", ("--goto", "{path}:{line}"), ("--goto", "{path}")),
+    ("VS Code Insiders", "code-insiders", ("--goto", "{path}:{line}"), ("--goto", "{path}")),
+    ("Cursor", "cursor", ("--goto", "{path}:{line}"), ("--goto", "{path}")),
+    ("Sublime Text", "subl", ("{path}:{line}",), ("{path}",)),
+    ("Zed", "zed", ("{path}:{line}",), ("{path}",)),
+    ("Notepad++", "notepad++", ("-n", "{line}", "{path}"), ("{path}",)),
+)
+
+
+def _editor_argv(template: tuple[str, ...], path: str, line: int | None) -> list[str]:
+    """Substitute {path}/{line} into an argv template (never shell-interpreted)."""
+    out = []
+    for part in template:
+        if "{line}" in part and line is None:
+            continue  # a line-conditional flag vanishes when there is no line
+        out.append(part.replace("{path}", path).replace(
+            "{line}", str(line) if line is not None else ""))
+    return out
+
+
+def _popen_argv(argv: list[str]) -> list[str]:
+    """Wrap Windows .cmd/.bat shims (VS Code's `code`) for CreateProcess."""
+    if os.name == "nt" and re.search(r"\.(cmd|bat)$", argv[0], re.I):
+        return [os.environ.get("COMSPEC") or "cmd.exe", "/c", *argv]
+    return argv
+
+
 def open_file_in_editor(path: str, line: int | None = None) -> dict:
-    """Open ``path`` with the OS default handler. Returns {ok, ...}."""
+    """Open ``path`` at ``line`` in a real editor when one is available.
+
+    Order: ``TRACE_EDITOR`` (a user command template such as
+    ``code --goto {path}:{line}``), then common editors on PATH, then the OS
+    default handler. Returns {ok, ...} and never claims a line jump that did
+    not happen: the fallback's note is explicit about the limitation.
+    """
     p = Path(path)
     if not p.exists():
         return {"ok": False, "error": f"File not found: {path}"}
+    line = int(line) if line is not None and int(line) > 0 else None
+
+    # 1. Explicit user override. shlex-split (no shell), placeholders
+    #    substituted per token; a template without {path} gets it appended.
+    custom = (os.environ.get("TRACE_EDITOR") or "").strip()
+    if custom:
+        try:
+            # posix=False on Windows so backslash paths survive; quote marks
+            # retained by that mode are stripped per token afterwards.
+            tokens = shlex.split(custom, posix=(os.name != "nt"))
+            tokens = [re.sub(r'^"(.*)"$', r"\1", t) for t in tokens]
+            argv = _editor_argv(tuple(tokens), str(p), line)
+            if not any("{path}" in t for t in tokens):
+                argv.append(str(p))
+            if argv and argv[0]:
+                exe = shutil.which(argv[0]) or argv[0]
+                subprocess.Popen(_popen_argv([exe, *argv[1:]]))
+                return {"ok": True, "path": str(p), "line": line, "editor": "TRACE_EDITOR",
+                        "note": (f"Opened with TRACE_EDITOR at line {line}."
+                                 if line else "Opened with TRACE_EDITOR.")}
+        except (ValueError, OSError):
+            pass  # a broken TRACE_EDITOR falls through to the known editors
+
+    # 2. Known editors on PATH.
+    for display, exe_name, with_line, without_line in _LINE_EDITORS:
+        exe = shutil.which(exe_name)
+        if not exe:
+            continue
+        argv = _editor_argv(with_line if line is not None else without_line,
+                            str(p), line)
+        try:
+            subprocess.Popen(_popen_argv([exe, *argv]))
+            return {"ok": True, "path": str(p), "line": line, "editor": display,
+                    "note": (f"Opened in {display} at line {line}."
+                             if line else f"Opened in {display}.")}
+        except OSError:
+            continue  # try the next editor, then the default handler
+
+    # 3. OS default handler. Line navigation depends on editor integration;
+    #    report honestly instead of claiming a jump.
     try:
         if sys.platform.startswith("win"):
-            import os as _os
-            _os.startfile(str(p))  # type: ignore[attr-defined]
+            os.startfile(str(p))  # type: ignore[attr-defined]
         elif sys.platform == "darwin":
             subprocess.Popen(["open", str(p)])
         else:
             subprocess.Popen(["xdg-open", str(p)])
-        # Line navigation depends on editor integration; report honestly.
         return {"ok": True, "path": str(p), "line": line,
                 "note": "Opened with OS default handler. Line navigation requires "
-                        "a supported editor integration (not guaranteed)."}
+                        "a supported editor (e.g. VS Code) or TRACE_EDITOR."}
     except Exception as e:
         return {"ok": False, "error": f"Could not open {path}: {e}"}
 

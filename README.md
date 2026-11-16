@@ -201,6 +201,7 @@ for backend-only, CI, and source workflows:
 | `TRACE_HISTORY_MAX` | `500` | Maximum journal entries |
 | `TRACE_HISTORY_DIR` | platform default | Report journal location |
 | `TRACE_PYTHON` | `python` | Python executable used by Electron |
+| `TRACE_EDITOR` | unset | Editor command template for open-at-line, e.g. `code --goto {path}:{line}` |
 
 Useful Electron flags are `--project-dir DIR`, `--backend-port N`,
 `--user-data-dir DIR`, and `--smoke`.
@@ -212,8 +213,9 @@ Useful Electron flags are `--project-dir DIR`, `--backend-port N`,
 - Results history shows the newest 50 entries by default; **Show older**
   widens the view (and the search depth) up to the journal cap
   (`TRACE_HISTORY_MAX`).
-- `Open at line N` delegates to the OS default file handler; line jumping
-  depends on editor integration.
+- `Open at line N` prefers `TRACE_EDITOR` or a known editor found on PATH
+  (VS Code, Cursor, Sublime Text, Zed, Notepad++) and otherwise falls back to
+  the OS default handler, where line jumping depends on editor integration.
 - `.trace-bak` files are not cleaned up automatically.
 - The published installer currently targets Windows.
 

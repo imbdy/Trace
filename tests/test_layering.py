@@ -23,10 +23,10 @@ STDLIB_TOP = {
     "argparse", "ast", "base64", "concurrent", "contextlib", "copy",
     "ctypes", "dataclasses", "datetime", "enum", "functools", "hashlib",
     "hmac", "html", "http", "io", "itertools", "json", "logging",
-    "math", "os", "pathlib", "queue", "random", "re", "shutil", "signal",
-    "socket", "sqlite3", "statistics", "string", "subprocess", "sys",
-    "tempfile", "textwrap", "threading", "time", "tkinter", "traceback",
-    "typing", "urllib", "uuid", "warnings", "weakref",
+    "math", "os", "pathlib", "queue", "random", "re", "shlex", "shutil",
+    "signal", "socket", "sqlite3", "statistics", "string", "subprocess",
+    "sys", "tempfile", "textwrap", "threading", "time", "tkinter",
+    "traceback", "typing", "urllib", "uuid", "warnings", "weakref",
     "__future__",
 }
 

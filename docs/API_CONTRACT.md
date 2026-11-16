@@ -197,8 +197,13 @@ file" button). Request: `{"dry_run": false}`. Response on success:
 {"path": "C:/code/myapp/app.py", "line": 42}
 ```
 
-Opens via OS default handler. `line` is best-effort (editor integration
-dependent); response notes this honestly. 404 if file missing.
+Opens in the best available editor: `TRACE_EDITOR` (a command template such
+as `code --goto {path}:{line}`, substituted per-token, never shell-run),
+else a known editor found on PATH (VS Code, VS Code Insiders, Cursor, Sublime
+Text, Zed, Notepad++), else the OS default handler. Success responses carry
+`{"ok": true, "path": ..., "line": ..., "editor": "VS Code", "note": "Opened
+in VS Code at line 42."}`; the fallback's note states honestly that line
+navigation is not guaranteed. 404 if file missing.
 
 ## POST /api/v1/chat → 200
 

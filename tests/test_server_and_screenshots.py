@@ -2,11 +2,14 @@
 provider connection probe (POST /api/v1/config/test)."""
 
 import json
+import os
+import tempfile
 import threading
 import time
 import unittest
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from trace_backend.config import TraceConfig
 from trace_backend.investigation_engine import InvestigationEngine
@@ -93,6 +96,96 @@ class TestServer(unittest.TestCase):
     def test_open_missing_file(self):
         res = open_file_in_editor("/nonexistent-trace-xyz/file.py")
         self.assertFalse(res["ok"])
+
+
+class TestOpenFileEditor(unittest.TestCase):
+    """Line-aware opening: known editors win, TRACE_EDITOR overrides, and the
+    OS-default fallback never claims a line jump."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.file = Path(self.tmp.name) / "app.py"
+        self.file.write_text("x = 1\n", encoding="utf-8")
+        self._env_patcher = mock.patch.dict(os.environ, {}, clear=False)
+        self._env_patcher.start()
+        self.addCleanup(self._env_patcher.stop)
+        os.environ.pop("TRACE_EDITOR", None)
+        popener = mock.MagicMock()
+        self.popen = popener
+        self._popen_patcher = mock.patch(
+            "trace_backend.server.subprocess.Popen", popener)
+        self._popen_patcher.start()
+        self.addCleanup(self._popen_patcher.stop)
+
+    def _which(self, found: dict[str, str]):
+        return lambda name: found.get(name)
+
+    def test_known_editor_gets_path_and_line(self):
+        with mock.patch("trace_backend.server.shutil.which",
+                        self._which({"code": r"C:\bin\code.cmd"})):
+            res = open_file_in_editor(str(self.file), 7)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["editor"], "VS Code")
+        self.assertEqual(res["line"], 7)
+        self.assertIn("line 7", res["note"])
+        argv = self.popen.call_args[0][0]
+        self.assertIn(r"c:\bin\code.cmd", [a.lower() for a in argv])
+        self.assertIn(f"{self.file}:7", argv)
+
+    def test_editor_without_line_support_omits_the_line(self):
+        with mock.patch("trace_backend.server.shutil.which",
+                        self._which({"subl": r"C:\bin\subl.exe"})):
+            res = open_file_in_editor(str(self.file))
+        self.assertTrue(res["ok"])
+        self.assertIsNone(res["line"])
+        self.assertIn("Opened in Sublime Text", res["note"])
+        argv = self.popen.call_args[0][0]
+        self.assertNotIn("-n", argv)  # notepad++-style flags stay out
+
+    def test_trace_editor_template_wins_and_is_not_shell_interpreted(self):
+        os.environ["TRACE_EDITOR"] = 'myeditor --goto "{path}:{line}"'
+        with mock.patch("trace_backend.server.shutil.which",
+                        self._which({"myeditor": r"C:\bin\myeditor.exe"})):
+            res = open_file_in_editor(str(self.file), 3)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["editor"], "TRACE_EDITOR")
+        argv = self.popen.call_args[0][0]
+        self.assertEqual(argv[0].lower(), r"c:\bin\myeditor.exe")
+        self.assertEqual(argv[1], "--goto")
+        self.assertEqual(argv[2], f"{self.file}:3")
+        # no shell involved: the whole argv is passed to Popen
+        self.assertNotIn("&", " ".join(argv))
+
+    def test_trace_editor_without_path_placeholder_appends_it(self):
+        os.environ["TRACE_EDITOR"] = "myeditor"
+        with mock.patch("trace_backend.server.shutil.which",
+                        self._which({"myeditor": r"C:\bin\myeditor.exe"})):
+            res = open_file_in_editor(str(self.file), 3)
+        self.assertTrue(res["ok"])
+        argv = self.popen.call_args[0][0]
+        self.assertEqual(argv[-1], str(self.file))
+
+    def test_fallback_never_claims_a_line_jump(self):
+        with mock.patch("trace_backend.server.shutil.which",
+                        self._which({})):
+            res = open_file_in_editor(str(self.file), 5)
+        self.assertTrue(res["ok"])
+        self.assertNotIn("editor", res)
+        self.assertIn("OS default handler", res["note"])
+        self.assertIn("TRACE_EDITOR", res["note"])
+        # the default handler opened the file: on Windows via startfile
+        # (never Popen), elsewhere via open/xdg-open (one Popen call).
+        self.assertEqual(self.popen.call_count, 0 if os.name == "nt" else 1)
+
+    def test_negative_line_is_dropped(self):
+        with mock.patch("trace_backend.server.shutil.which",
+                        self._which({"code": r"C:\bin\code.cmd"})):
+            res = open_file_in_editor(str(self.file), -4)
+        self.assertTrue(res["ok"])
+        self.assertIsNone(res["line"])
+        argv = self.popen.call_args[0][0]
+        self.assertIn(str(self.file), argv[-1])  # bare --goto {path} form
 
 
 class _ProbeOllama:

@@ -184,11 +184,16 @@ Prioritized, actionable items derived from documented limitations and current im
       button; unavailable vs empty states unchanged. Test:
       `tests/test_history.py::test_search_depth_grows_with_limit`.
 
-3. **Open-at-line reliability/editor integration**
-   - **Problem:** `POST /open-file` opens via OS default handler; line navigation is best-effort/editor-dependent and currently reported honestly but not integrated.
-   - **Why:** Verified findings are most useful when they jump to exact lines in common editors.
-   - **Likely files:** `trace_backend/server.py` (`open_file_in_editor`), Electron main/open-file handling, settings/UI for preferred editor command (optional), `docs/API_CONTRACT.md`, `README.md`.
-   - **Done when:** Supports configurable/best-effort line-aware opening for common editors/OS cases with safe argument handling; falls back honestly when unsupported (no false “opened at line” claims).
+3. **Open-at-line reliability/editor integration** — ✅ DONE
+    - Implemented: `trace_backend/server.py` `open_file_in_editor()` now tries
+      (1) `TRACE_EDITOR` (user command template, shlex-split, per-token
+      `{path}`/`{line}` substitution, no shell), (2) known editors on PATH
+      (VS Code/Insiders, Cursor, Sublime, Zed, Notepad++ — each with a real
+      line flag), (3) the OS default handler with the previous honest note.
+      Responses carry `editor` + an exact `note`; the results renderer shows
+      the backend note verbatim. Windows `.cmd` shims are wrapped for
+      CreateProcess. Tests: `tests/test_server_and_screenshots.py`
+      `TestOpenFileEditor` (6 cases); layering stdlib set gained `shlex`.
 
 ### P2 — Provider/model behavior
 4. **OpenAI-compatible streaming chat/completions**
