@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .agent_graph import END, Graph
-from .code_fixer import apply_unified_diff
+from .code_fixer import apply_unified_diff, cleanup_backups as _cleanup_backups
 from .code_tools import (
     complexity_snapshot,
     check_json_config,
@@ -1369,6 +1369,28 @@ class InvestigationEngine:
             out["ok"] = False
             out.setdefault("reason", "; ".join(result.warnings) or "not applied")
         return out
+
+    def cleanup_backups(self, project_dir: str | None,
+                        *, dry_run: bool = True) -> dict:
+        """List/remove Trace ``.trace-bak`` files under ``project_dir``.
+
+        Explicit and opt-in: ``dry_run`` defaults to True, so nothing is
+        deleted unless the caller asks. Backups live in the project tree, so
+        the project root is resolved here the same way other project actions
+        are; a root that cannot be identified is refused honestly. Never
+        raises.
+        """
+        try:
+            root = find_project_root(project_dir) if project_dir else None
+            if root is None:
+                return {"ok": False, "dry_run": bool(dry_run), "backups": [],
+                        "removed": [],
+                        "warnings": ["project root could not be identified"]}
+            return _cleanup_backups(root, dry_run=bool(dry_run))
+        except Exception as exc:  # pragma: no cover - defensive
+            return {"ok": False, "dry_run": bool(dry_run), "backups": [],
+                    "removed": [],
+                    "warnings": [f"backup cleanup failed: {exc}"]}
 
     # -- parsing ------------------------------------------------------------
     @staticmethod

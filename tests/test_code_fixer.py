@@ -4,7 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from trace_backend.code_fixer import apply_report_fix, apply_unified_diff
+from trace_backend.code_fixer import (
+    apply_report_fix, apply_unified_diff, cleanup_backups, list_backups,
+)
 from trace_backend.config import TraceConfig
 from trace_backend.investigation_engine import InvestigationEngine
 from trace_backend.schemas import InvestigationRequest
@@ -304,3 +306,71 @@ if __name__ == "__main__":
 
 
 
+class TestBackupCleanup(unittest.TestCase):
+    def _seed(self, root: Path):
+        (root / "app.py").write_text("orig\n", encoding="utf-8")
+        (root / "app.py.trace-bak").write_text("prev\n", encoding="utf-8")
+        (root / "app.py.trace-bak-1").write_text("first\n", encoding="utf-8")
+        sub = root / "pkg"
+        sub.mkdir()
+        (sub / "m.py.trace-bak").write_text("x\n", encoding="utf-8")
+        (sub / "m.py").write_text("real\n", encoding="utf-8")
+        # excluded dirs must not be scanned/removed
+        exc = root / "node_modules"
+        exc.mkdir()
+        (exc / "x.js.trace-bak").write_text("no\n", encoding="utf-8")
+
+    def test_list_backups_scoped_and_sorted(self):
+        tmp, root = _project()
+        self.addCleanup(tmp.cleanup)
+        self._seed(root)
+        found = list_backups(root)
+        self.assertEqual(found, [
+            "app.py.trace-bak", "app.py.trace-bak-1", "pkg/m.py.trace-bak",
+        ])
+
+    def test_cleanup_default_dry_run_lists_without_deleting(self):
+        tmp, root = _project()
+        self.addCleanup(tmp.cleanup)
+        self._seed(root)
+        res = cleanup_backups(root)  # dry_run defaults to True
+        self.assertTrue(res["ok"])
+        self.assertTrue(res["dry_run"])
+        self.assertEqual(res["removed"], [])
+        self.assertTrue((root / "app.py.trace-bak").is_file())
+        self.assertTrue((root / "pkg" / "m.py.trace-bak").is_file())
+
+    def test_cleanup_explicit_removes_only_backups(self):
+        tmp, root = _project()
+        self.addCleanup(tmp.cleanup)
+        self._seed(root)
+        res = cleanup_backups(root, dry_run=False)
+        self.assertTrue(res["ok"])
+        self.assertEqual(set(res["removed"]), {
+            "app.py.trace-bak", "app.py.trace-bak-1", "pkg/m.py.trace-bak",
+        })
+        self.assertFalse((root / "app.py.trace-bak").exists())
+        self.assertFalse((root / "app.py.trace-bak-1").exists())
+        self.assertFalse((root / "pkg" / "m.py.trace-bak").exists())
+        # originals untouched; excluded backup untouched
+        self.assertTrue((root / "app.py").is_file())
+        self.assertTrue((root / "pkg" / "m.py").is_file())
+        self.assertTrue((root / "node_modules" / "x.js.trace-bak").is_file())
+
+    def test_cleanup_no_root_is_refused(self):
+        res = cleanup_backups(None, dry_run=False)
+        self.assertFalse(res["ok"])
+        self.assertTrue(res["warnings"])
+
+    def test_engine_cleanup_backups_resolves_root(self):
+        tmp, root = _project()
+        self.addCleanup(tmp.cleanup)
+        (root / "app.py.trace-bak").write_text("prev\n", encoding="utf-8")
+        engine = InvestigationEngine(TraceConfig())
+        listed = engine.cleanup_backups(str(root))
+        self.assertTrue(listed["ok"])
+        self.assertEqual(listed["backups"], ["app.py.trace-bak"])
+        self.assertTrue((root / "app.py.trace-bak").is_file())
+        removed = engine.cleanup_backups(str(root), dry_run=False)
+        self.assertEqual(removed["removed"], ["app.py.trace-bak"])
+        self.assertFalse((root / "app.py.trace-bak").exists())

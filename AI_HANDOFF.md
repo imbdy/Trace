@@ -214,11 +214,14 @@ Prioritized, actionable items derived from documented limitations and current im
      and no secrets reach the renderer. README clarifies save-vs-test.
 
 ### P3 — Maintenance/safety/packaging
-6. **`.trace-bak` lifecycle management**
-   - **Problem:** Backup files created by safe fixer/apply-fix are not auto-cleaned.
-   - **Why:** Can accumulate over time; cleanup must never risk deleting originals or current files.
-   - **Likely files:** `trace_backend/code_fixer.py`, possibly CLI/UI action to list/clean backups, `docs/API_CONTRACT.md`/`README.md` if user-facing.
-   - **Done when:** Safe, explicit cleanup strategy (manual command/UI or policy) with clear scoping to project/root and no destructive defaults; tests cover edge cases.
+6. **`.trace-bak` lifecycle management** — ✅ DONE
+   - Implemented: explicit, opt-in lifecycle — `code_fixer.list_backups` /
+     `cleanup_backups` (scoped to the project root, excludes pruned, only
+     `*.trace-bak`/`*.trace-bak-1`, dry-run default), exposed as
+     `POST /api/v1/cleanup-backups` (engine resolves the root; 400 if
+     unidentified). Defaults never delete; originals/unrelated files are
+     untouched. Docs: `docs/API_CONTRACT.md`, `README.md`. Tests:
+     `tests/test_code_fixer.py` `TestBackupCleanup` + engine helper cases.
 
 7. **Cross-platform desktop packaging/support**
    - **Problem:** Published/packaged installer currently targets Windows; codebase contains some cross-platform handling but release path is Windows-focused.

@@ -219,7 +219,9 @@ Useful Electron flags are `--project-dir DIR`, `--backend-port N`,
 - `Open at line N` prefers `TRACE_EDITOR` or a known editor found on PATH
   (VS Code, Cursor, Sublime Text, Zed, Notepad++) and otherwise falls back to
   the OS default handler, where line jumping depends on editor integration.
-- `.trace-bak` files are not cleaned up automatically.
+- `.trace-bak` backups are kept by default and never deleted automatically; use
+  `POST /api/v1/cleanup-backups` with `{"project_dir": "...", "dry_run": false}`
+  to remove them explicitly (dry-run by default lists them without deleting).
 - The published installer currently targets Windows.
 
 ## Backend API

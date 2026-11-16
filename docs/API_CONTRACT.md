@@ -205,6 +205,26 @@ Text, Zed, Notepad++), else the OS default handler. Success responses carry
 in VS Code at line 42."}`; the fallback's note states honestly that line
 navigation is not guaranteed. 404 if file missing.
 
+## POST /api/v1/cleanup-backups → 200
+
+Explicit, opt-in lifecycle for the `*.trace-bak` / `*.trace-bak-1` files that
+auto-fix keeps alongside edited files. Nothing is deleted unless `dry_run` is
+explicitly `false`, and only backup files inside the resolved project root are
+ever removed (originals and unrelated files are never touched).
+
+Request:
+
+```json
+{"project_dir": "C:/code/myapp (optional; default root detection)",
+ "dry_run": true}
+```
+
+- `dry_run` defaults to `true` (list only).
+- Success (200): `{"ok": true, "dry_run": <bool>, "backups": ["app.py.trace-bak", ...], "removed": [...], "warnings": [...]}`.
+  `removed` is populated only when `dry_run` is `false`; a partial cleanup
+  keeps `ok` truthful and reports per-file warnings.
+- 400 when the project root cannot be identified (nothing listed or removed).
+
 ## POST /api/v1/chat → 200
 
 Plain conversation: a single model round-trip. No evidence, no tools, no

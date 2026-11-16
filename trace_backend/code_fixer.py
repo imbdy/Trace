@@ -315,3 +315,93 @@ def apply_report_fix(
         return res
     return apply_unified_diff(root, diff, dry_run=dry_run,
                               create_backup=create_backup)
+
+
+# -- backup lifecycle (explicit, never automatic) ---------------------------
+
+_BACKUP_SUFFIXES = (".trace-bak-1", ".trace-bak")
+
+
+def _is_backup_name(name: str) -> bool:
+    return name.endswith(".trace-bak") or name.endswith(".trace-bak-1")
+
+
+def list_backups(root: Path | None) -> list[str]:
+    """Return project-relative paths of Trace backup files under ``root``.
+
+    Read-only and scoped to the project root; excluded directories are
+    skipped. Never raises.
+    """
+    if root is None:
+        return []
+    try:
+        resolved_root = root.resolve()
+    except OSError:
+        return []
+    found: list[str] = []
+    try:
+        for dirpath, dirnames, filenames in os.walk(resolved_root):
+            # Prune excluded dirs in-place so we never descend into them.
+            try:
+                rel_dir = Path(dirpath).resolve().relative_to(resolved_root)
+            except ValueError:
+                dirnames[:] = []
+                continue
+            dirnames[:] = [d for d in dirnames if not is_excluded(rel_dir / d)]
+            if is_excluded(rel_dir):
+                continue
+            for name in filenames:
+                if not _is_backup_name(name):
+                    continue
+                full = Path(dirpath) / name
+                try:
+                    rel = full.resolve().relative_to(resolved_root)
+                except (ValueError, OSError):
+                    continue
+                found.append(rel.as_posix())
+    except OSError:
+        return sorted(found)
+    found.sort()
+    return found
+
+
+def cleanup_backups(root: Path | None, *, dry_run: bool = True) -> dict:
+    """List or remove Trace backup files under ``root`` (explicit action).
+
+    Only files whose names end with ``.trace-bak`` / ``.trace-bak-1`` inside
+    the project root are ever removed — originals and unrelated files are
+    never touched. ``dry_run`` defaults to True so nothing is deleted unless
+    the caller explicitly requests it. Never raises.
+    """
+    if root is None:
+        return {"ok": False, "dry_run": bool(dry_run), "backups": [],
+                "removed": [], "warnings": ["No project root provided."]}
+    try:
+        resolved_root = root.resolve()
+    except OSError:
+        return {"ok": False, "dry_run": bool(dry_run), "backups": [],
+                "removed": [], "warnings": [f"Project root is unreadable: {root}"]}
+    backups = list_backups(root)
+    result = {"ok": True, "dry_run": bool(dry_run), "backups": backups,
+              "removed": [], "warnings": []}
+    if dry_run:
+        return result
+    for rel in backups:
+        resolved = resolve_within_root(root, rel)
+        if resolved is None or not _is_backup_name(resolved.name):
+            result["warnings"].append(f"Skipped {rel}: refused as unsafe.")
+            continue
+        try:
+            # Re-confirm confinement after resolution (defense in depth).
+            resolved.resolve().relative_to(resolved_root)
+        except (ValueError, OSError):
+            result["warnings"].append(f"Skipped {rel}: outside project root.")
+            continue
+        try:
+            if resolved.is_file():
+                resolved.unlink()
+                result["removed"].append(rel)
+        except OSError as e:
+            result["ok"] = False
+            result["warnings"].append(f"Could not remove {rel}: {e}")
+    return result

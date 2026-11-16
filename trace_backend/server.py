@@ -640,6 +640,15 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
             if (len(parts) == 6 and parts[1:4] == ["api", "v1", "investigations"]
                     and parts[5] == "apply-fix"):
                 return self._apply_fix(parts[4])
+            if path == "/api/v1/cleanup-backups":
+                # Explicit, opt-in backup lifecycle: defaults to a dry-run
+                # listing so nothing is deleted without intent. Only
+                # *.trace-bak / *.trace-bak-1 inside the project root qualify.
+                data = self._read_json()
+                project_dir = str(data.get("project_dir") or "").strip() or None
+                dry_run = bool(data.get("dry_run", True))
+                result = store.engine.cleanup_backups(project_dir, dry_run=dry_run)
+                return self._send_json(result, 200 if result.get("ok") else 400)
             if path == "/api/v1/open-file":
                 data = self._read_json()
                 target = str(data.get("path", ""))
