@@ -206,11 +206,12 @@ Prioritized, actionable items derived from documented limitations and current im
      `TestOpenAICompatibleStreaming` (5 cases). README limitation removed;
      `docs/ARCHITECTURE.md` updated.
 
-5. **Provider save/test UX clarity (if gaps remain)**
-   - **Problem:** Saving provider settings does not run a generation request by design; `/config/test` probe exists. Ensure UX clearly distinguishes “saved” vs “tested/connected” and surfaces probe errors well.
-   - **Why:** Reduces confusion when first investigation fails due to bad endpoint/model/key.
-   - **Likely files:** `electron/src/renderer/neo/*`, `electron/src/main/main.ts`, `electron/src/main/traceApi.ts`, `docs/API_CONTRACT.md`, `README.md`.
-   - **Done when:** Connection state/probe results are explicit and honest in UI; no secrets exposed to renderer; behavior matches docs.
+5. **Provider save/test UX clarity (if gaps remain)** — ✅ DONE
+   - Implemented: the model-connection panel now states the honest lifecycle —
+     `not configured` / `saving…` → `saved (not tested)` on save (with a note
+     to verify) vs `testing…` → `connected (tested)` or `test failed` on probe;
+     probe errors are surfaced verbatim, the badge clears on provider changes,
+     and no secrets reach the renderer. README clarifies save-vs-test.
 
 ### P3 — Maintenance/safety/packaging
 6. **`.trace-bak` lifecycle management**

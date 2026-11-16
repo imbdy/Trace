@@ -178,7 +178,8 @@
         if (model) model.value = String(c.ollama_model || '');
         if (base) base.value = String(c.api_base || '');
         providerKindChanged();
-        providerStatus(c.has_api_key ? 'key saved' : 'not connected');
+        var configured = !!(c && c.provider && c.ollama_model);
+        providerStatus(configured ? 'saved (not tested)' : 'not configured');
       }).catch(function () {});
       requestFitSettled();
     } else requestFit();
@@ -209,23 +210,24 @@
     var key = document.getElementById('provider-key');
     var btn = document.getElementById('provider-test');
     if (!kind || !model || !window.trace || !window.trace.testProviderConnection) return;
-    if (!String(model.value || '').trim()) { testBadge('fail', '✗ model required'); return; }
+    if (!String(model.value || '').trim()) { testBadge('fail', 'model required'); return; }
     if (btn) btn.disabled = true;
-    testBadge('testing', 'testing connection…');
+    testBadge('testing', 'Testing connection...');
+    providerStatus('testing...');
     window.trace.testProviderConnection({
       provider: kind.value, model: model.value,
       api_base: base ? base.value : '', api_key: key ? key.value : ''
     }).then(function (res) {
       if (res && res.ok) {
-        testBadge('ok', '✓ Connected (' + Number(res.latency_ms || 0) + 'ms)');
-        providerStatus('ready to test again');
+        testBadge('ok', 'Connected (' + Number(res.latency_ms || 0) + 'ms)');
+        providerStatus('connected (tested)');
       } else {
-        testBadge('fail', '✗ ' + ((res && res.error) || 'connection failed'));
-        providerStatus('not connected');
+        testBadge('fail', (res && res.error) || 'connection failed');
+        providerStatus('test failed');
       }
     }).catch(function () {
-      testBadge('fail', '✗ connection failed');
-      providerStatus('not connected');
+      testBadge('fail', 'connection failed');
+      providerStatus('test failed');
     }).finally(function () { if (btn) btn.disabled = false; });
   }
   function saveProvider() {
@@ -237,14 +239,14 @@
     if (!kind || !model || !window.trace || !window.trace.configureProvider) return;
     if (!String(model.value || '').trim()) { providerStatus('model required'); return; }
     if (btn) btn.disabled = true;
-    providerStatus('connecting…');
+    providerStatus('saving...');
     window.trace.configureProvider({ provider: kind.value, model: model.value, api_base: base ? base.value : '', api_key: key ? key.value : '' })
       .then(function (res) {
-        if (!res || res.ok === false) { providerStatus('could not connect'); if (res && res.error) note(res.error, false); return; }
-        providerStatus('ready');
+        if (!res || res.ok === false) { providerStatus('save failed'); if (res && res.error) note(res.error, false); return; }
+        providerStatus('saved (not tested)');
         if (key) key.value = '';
-        note('model connection ready', true);
-      }).catch(function () { providerStatus('could not connect'); })
+        note('Connection saved. Use Test connection to verify.', true);
+      }).catch(function () { providerStatus('save failed'); })
       .finally(function () { if (btn) btn.disabled = false; });
   }
 

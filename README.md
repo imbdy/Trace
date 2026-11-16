@@ -91,8 +91,10 @@ the renderer does not receive it. On supported systems, Trace persists the
 provider profile using Electron encrypted storage. The key field is cleared
 after saving and only a redacted status is shown.
 
-Saving a connection does not make a test generation request. An invalid
-endpoint, model, or key is reported when the first chat or investigation runs.
+Saving stores the connection without making a test request. The settings panel
+distinguishes **Saved (not tested)** from **Connected (tested)** — use **Test
+connection** to probe the provider; unverified settings fail on the first chat
+or investigation.
 
 ## Install the Windows release
 
