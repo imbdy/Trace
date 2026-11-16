@@ -100,9 +100,10 @@ collect ─┬─ diagnostics ∥ (opt-in) tests ∥ intelligence ─┬→ anal
 ```
 
 The `analyze` call reports the `model_analysis` stage while the configured
-provider is working. Ollama supports the backend's streaming path; compatible
-providers currently use a non-streaming completion request. The UI never
-invents progress or exposes hidden chain-of-thought.
+provider is working. Both Ollama (NDJSON) and OpenAI-compatible chat
+completions (SSE deltas) stream tokens through the same throttled
+`model_analysis` ticks; the UI never invents progress or exposes hidden
+chain-of-thought.
 
 The model-driven `repair` node is the only edge into the model beyond
 `analyze` — one bounded re-ask with a JSON-only prompt. Every other node's

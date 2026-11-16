@@ -196,11 +196,15 @@ Prioritized, actionable items derived from documented limitations and current im
       `TestOpenFileEditor` (6 cases); layering stdlib set gained `shlex`.
 
 ### P2 — Provider/model behavior
-4. **OpenAI-compatible streaming chat/completions**
-   - **Problem:** OpenAI-compatible provider path is currently non-streaming; Ollama path supports backend streaming tokens/progress feel during analysis.
-   - **Why:** Improves responsiveness/observability for compatible providers during long model calls (without exposing hidden chain-of-thought; keep throttled/honest stage updates).
-   - **Likely files:** `trace_backend/ollama_client.py`, `trace_backend/investigation_engine.py` (token callback/stream use), `trace_backend/server.py`/SSE behavior only if needed, `docs/ARCHITECTURE.md`, `README.md`, tests (`tests/test_ollama_client.py`, engine/SSE-related tests).
-   - **Done when:** Streaming supported where provider allows, with correct cancellation/timeout/error mapping and no regression to Ollama path or verification rules.
+4. **OpenAI-compatible streaming chat/completions** — ✅ DONE
+   - Implemented: `ollama_client._openai_chat()` now streams SSE deltas
+     (`choices[].delta.content`, `[DONE]` sentinel) with the same
+     `on_token`/`cancel_event`/deadline semantics as the Ollama NDJSON path;
+     `chat()` forwards `stream`/`on_token`/`cancel_event` for compatible
+     providers. No engine/SSE/verification changes required (the engine
+     already requested streaming ticks). Tests: `tests/test_ollama_client.py`
+     `TestOpenAICompatibleStreaming` (5 cases). README limitation removed;
+     `docs/ARCHITECTURE.md` updated.
 
 5. **Provider save/test UX clarity (if gaps remain)**
    - **Problem:** Saving provider settings does not run a generation request by design; `/config/test` probe exists. Ensure UX clearly distinguishes “saved” vs “tested/connected” and surfaces probe errors well.

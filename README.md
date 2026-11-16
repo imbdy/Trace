@@ -208,7 +208,8 @@ Useful Electron flags are `--project-dir DIR`, `--backend-port N`,
 
 ## Known limitations
 
-- OpenAI-compatible provider calls currently use the non-streaming chat path.
+- *(none currently; the openai-compatible analysis path now streams when the
+  provider supports SSE deltas, with the same throttled stage ticks as Ollama.)*
 - Provider settings are saved without a test generation request.
 - Results history shows the newest 50 entries by default; **Show older**
   widens the view (and the search depth) up to the journal cap

@@ -152,6 +152,60 @@ class TestOllamaClient(unittest.TestCase):
                 client.generate("hi", stream=True)
 
 
+class TestOpenAICompatibleStreaming(unittest.TestCase):
+    def _client(self):
+        return OllamaClient(TraceConfig(
+            provider="openai-compatible",
+            api_base="http://127.0.0.1:9999/v1",
+            ollama_model="gpt-test",
+            ollama_api_key="k",
+        ))
+
+    def test_streaming_concatenates_and_emits_tokens(self):
+        stream = (b'data: {"choices":[{"delta":{"content":"hel"}}]}\n\n'
+                  b'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n'
+                  b'data: [DONE]\n\n')
+        seen: list[str] = []
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(stream)):
+            out = self._client().chat(
+                [{"role": "user", "content": "hi"}], stream=True, on_token=seen.append)
+        self.assertEqual(out, "hello")
+        self.assertEqual(seen, ["hel", "lo"])
+
+    def test_nonstream_path_unchanged(self):
+        payload = json.dumps(
+            {"choices": [{"message": {"content": "ok"}}]}).encode()
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(payload)) as m:
+            out = self._client().chat([{"role": "user", "content": "hi"}])
+        self.assertEqual(out, "ok")
+        sent = json.loads(m.call_args[0][0].data.decode("utf-8"))
+        self.assertFalse(sent["stream"])
+
+    def test_streaming_cancel_raises(self):
+        stream = b'data: {"choices":[{"delta":{"content":"x"}}]}\n\n' * 50
+        cancel = threading.Event()
+        cancel.set()
+        with mock.patch("urllib.request.urlopen", return_value=FakeResp(stream)):
+            with self.assertRaises(OllamaCancelledError):
+                self._client().chat([{"role": "user", "content": "hi"}],
+                                    stream=True, cancel_event=cancel)
+
+    def test_streaming_http_error_maps(self):
+        err = urllib.error.HTTPError("http://x/chat/completions", 401, "Unauthorized",
+                                     {}, io.BytesIO(b"bad key"))
+        with mock.patch("urllib.request.urlopen", side_effect=err):
+            with self.assertRaises(OllamaAuthError):
+                self._client().chat([{"role": "user", "content": "hi"}], stream=True)
+
+    def test_streaming_disconnect_maps(self):
+        class Dropping(FakeResp):
+            def readline(self):
+                raise ConnectionResetError("reset")
+        with mock.patch("urllib.request.urlopen", return_value=Dropping(b"")):
+            with self.assertRaises(OllamaConnectionError):
+                self._client().chat([{"role": "user", "content": "hi"}], stream=True)
+
+
 class TestProbe(unittest.TestCase):
     """probe(): the connection-test round-trip behind POST /config/test."""
 

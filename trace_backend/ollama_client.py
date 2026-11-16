@@ -125,7 +125,8 @@ class OllamaClient:
              cancel_event: threading.Event | None = None,
              timeout: float | None = None,
              options: dict | None = None) -> str:
-        """Call ``POST /api/chat``. Returns the full assistant text.
+        """Call the configured provider's chat endpoint. Returns the full
+        assistant text.
 
         ``messages``: list of ``{"role": ..., "content": ..., "images"?: [...]}``.
         When ``stream`` is True, ``on_token`` (callable) receives deltas.
@@ -133,7 +134,9 @@ class OllamaClient:
         """
         timeout = timeout if timeout is not None else self.config.read_timeout_s
         if self.config.provider == "openai-compatible":
-            return self._openai_chat(messages, timeout=timeout)
+            return self._openai_chat(messages, timeout=timeout, stream=stream,
+                                     on_token=on_token,
+                                     cancel_event=cancel_event)
         payload = {
             "model": self.config.ollama_model,
             "messages": messages,
@@ -165,28 +168,110 @@ class OllamaClient:
         except Exception as exc:
             raise self._friendly_connection_error(exc) from exc
 
-    def _openai_chat(self, messages: list[dict], *, timeout: float) -> str:
+    def _openai_chat(self, messages: list[dict], *, timeout: float,
+                      stream: bool = False, on_token: object = None,
+                      cancel_event: threading.Event | None = None) -> str:
         payload = {"model": self.config.ollama_model, "messages": messages,
-                   "stream": False}
+                   "stream": bool(stream)}
         req = urllib.request.Request(self._openai_base() + "/chat/completions",
                                      data=json.dumps(payload).encode("utf-8"),
                                      headers=self._openai_headers(), method="POST")
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                data = json.loads(resp.read().decode("utf-8", "replace"))
-            choices = data.get("choices", [])
-            content = choices[0].get("message", {}).get("content") if choices else None
-            if not content:
-                raise OllamaError("Provider returned no assistant message.")
-            return str(content)
+            resp_cm = urllib.request.urlopen(req, timeout=timeout)
         except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", "replace")[:500]
+            detail = ""
+            try:
+                detail = exc.read().decode("utf-8", "replace")[:500]
+            except Exception:
+                pass
             if exc.code in (401, 403):
                 raise OllamaAuthError("The provider rejected this API key.",
                                       hint="Check the key and provider endpoint.") from exc
-            raise OllamaError(f"Provider request failed (HTTP {exc.code}): {detail}") from exc
-        except (urllib.error.URLError, socket.timeout, TimeoutError, OSError) as exc:
+            raise OllamaError(
+                f"Provider request failed (HTTP {exc.code}): {detail}") from exc
+        except (socket.timeout, TimeoutError) as exc:
+            raise OllamaTimeoutError(
+                f"Provider request timed out after {timeout}s.",
+                hint="The provider may be slow; retry, or raise "
+                     "TRACE_READ_TIMEOUT_S.",
+            ) from exc
+        except (urllib.error.URLError, ConnectionError, OSError) as exc:
             raise self._friendly_connection_error(exc) from exc
+
+        try:
+            if not stream:
+                data = json.loads(resp_cm.read().decode("utf-8", "replace"))
+                choices = data.get("choices", [])
+                content = (choices[0].get("message", {}).get("content")
+                           if choices else None)
+                if not content:
+                    raise OllamaError("Provider returned no assistant message.")
+                return str(content)
+            return self._read_openai_stream(resp_cm, on_token, cancel_event,
+                                            timeout)
+        except OllamaError:
+            raise
+        except (socket.timeout, TimeoutError) as exc:
+            raise OllamaTimeoutError(
+                f"Provider response timed out after {timeout}s.",
+                hint="The provider may be slow; retry, or raise "
+                     "TRACE_READ_TIMEOUT_S.",
+            ) from exc
+        except (http.client.HTTPException, urllib.error.URLError,
+                ConnectionError, OSError, json.JSONDecodeError) as exc:
+            # A stream reset or malformed frame after connect must surface as a
+            # mapped error so callers degrade honestly instead of crashing.
+            raise self._friendly_connection_error(exc) from exc
+        finally:
+            try:
+                if hasattr(resp_cm, "close"):
+                    resp_cm.close()
+            except Exception:
+                pass
+
+    def _read_openai_stream(self, resp, on_token, cancel_event,
+                            timeout: float) -> str:
+        parts: list[str] = []
+        deadline = time.monotonic() + timeout
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                raise OllamaCancelledError("Provider request cancelled by user.")
+            if time.monotonic() > deadline:
+                raise OllamaTimeoutError(
+                    f"Provider streaming timed out after {timeout}s.")
+            line = resp.readline()
+            if not line:
+                break
+            raw = (line.decode("utf-8", "replace")
+                   if isinstance(line, bytes) else line).strip()
+            if not raw or raw.startswith(":"):
+                continue  # SSE comment / keepalive
+            if not raw.startswith("data:"):
+                continue
+            data = raw[5:].strip()
+            if not data or data == "[DONE]":
+                if data == "[DONE]":
+                    break
+                continue
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue  # tolerate a malformed frame
+            choices = chunk.get("choices") or []
+            delta = ""
+            if choices and isinstance(choices[0], dict):
+                msg = choices[0].get("delta") or choices[0].get("message") or {}
+                if isinstance(msg, dict):
+                    delta = msg.get("content") or ""
+            if delta:
+                parts.append(delta)
+                if callable(on_token):
+                    try:
+                        on_token(delta)
+                    except Exception:
+                        pass
+            # finish_reason present (e.g. "stop") — keep reading to [DONE].
+        return "".join(parts)
 
     def generate(self, prompt: str, *, system: str | None = None,
                  images: list[str] | None = None,
