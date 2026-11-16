@@ -7,9 +7,12 @@
   "main": "dist/main/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-assets.js",
-    "build:backend": "powershell -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
+    "build:backend": "node scripts/build-backend.js",
+    "build:backend:win": "powershell -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
     "dist:win": "npm run build && electron-builder --win nsis",
     "dist:win:publish": "npm run build && electron-builder --win nsis --publish always",
+    "dist:mac": "npm run build && electron-builder --mac dmg zip",
+    "dist:linux": "npm run build && electron-builder --linux AppImage deb",
     "start": "electron .",
     "smoke": "electron . --smoke",
     "test": "node --test test/placement.test.js test/settings.test.js test/report-export.test.js"
@@ -23,10 +26,7 @@
     "build": {
     "appId": "Trace.Trace",
     "productName": "Trace",
-    "artifactName": "Trace-Setup-${version}.${ext}",
-    "releaseInfo": {
-      "releaseNotesFile": "../RELEASE_NOTES.md"
-    },
+    "artifactName": "Trace-${version}-${os}-${arch}.${ext}",
     "publish": {
       "provider": "github",
       "owner": "imbdy",
@@ -34,13 +34,18 @@
       "releaseType": "release"
     },
     "win": {
-      "icon": "../assets/icons/trace.ico"
+      "icon": "../assets/icons/trace.ico",
+      "artifactName": "Trace-Setup-${version}.${ext}"
     },
     "mac": {
-      "icon": "../assets/icons/trace.png"
+      "icon": "../assets/icons/trace.png",
+      "category": "public.app-category.developer-tools",
+      "target": ["dmg", "zip"]
     },
     "linux": {
-      "icon": "../assets/icons/trace.png"
+      "icon": "../assets/icons/trace.png",
+      "category": "Development",
+      "target": ["AppImage", "deb"]
     },
     "nsis": {
       "oneClick": false,
@@ -59,8 +64,9 @@
         "to": "assets/icons"
       },
       {
-        "from": "resources/backend/trace-backend.exe",
-        "to": "backend/trace-backend.exe"
+        "from": "resources/backend",
+        "to": "backend",
+        "filter": ["trace-backend*"]
       }
     ]
   },

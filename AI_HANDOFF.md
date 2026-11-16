@@ -223,11 +223,11 @@ Prioritized, actionable items derived from documented limitations and current im
      untouched. Docs: `docs/API_CONTRACT.md`, `README.md`. Tests:
      `tests/test_code_fixer.py` `TestBackupCleanup` + engine helper cases.
 
-7. **Cross-platform desktop packaging/support**
-   - **Problem:** Published/packaged installer currently targets Windows; codebase contains some cross-platform handling but release path is Windows-focused.
-   - **Why:** Broader usability (macOS/Linux) if desired.
-   - **Likely files:** `electron/package.json` (builder targets), `electron/scripts/*`, `.github/workflows/release.yml`, backend bundling scripts, platform-specific path/open/update behaviors in `electron/src/main/*` and `trace_backend/server.py`.
-   - **Done when:** Target platforms build/package in CI with documented install/run steps and no regression to loopback/security behavior.
+7. **Cross-platform desktop packaging/support** — ✅ DONE (packaging path)
+   - Implemented: cross-platform build/release plumbing — ackend.ts resolves the bundled backend by platform (	race-backend[.exe]); scripts/build-backend.js (PyInstaller) replaces the Windows-only PS1 as the primary path; electron-builder config now carries per-platform targets/artifacts and bundles 
+esources/backend/trace-backend*; 
+elease.yml is a matrix (Windows NSIS, macOS dmg/zip, Linux AppImage/deb) with a final notes-publish step. Loopback/security behavior unchanged.
+   - Note: platform-specific runtime QA, code signing/notarization, and auto-update channel validation remain follow-up operational work (cannot be fully verified in this environment).
 
 ### How to approach issues
 - Start by reproducing/confirming current behavior from code/tests/docs (do not assume).

@@ -33,7 +33,8 @@ export class BackendManager {
     if (this.proc) return;
     const root = repoRoot(fromDir);
     const resources = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
-    const packaged = resources ? path.join(resources, "backend", "trace-backend.exe") : "";
+    const bin = process.platform === "win32" ? "trace-backend.exe" : "trace-backend";
+    const packaged = resources ? path.join(resources, "backend", bin) : "";
     const executable = packaged && require("fs").existsSync(packaged)
       ? packaged : (process.env.TRACE_PYTHON || "python");
     const args = executable === packaged

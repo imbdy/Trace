@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 <img src="assets/icons/trace-256.png" width="96" alt="Trace logo">
 
@@ -13,7 +13,7 @@ line against disk, and separates verified findings from hypotheses.
 [![Platform](https://img.shields.io/badge/platform-Windows-20232a?style=for-the-badge&logo=windows)](https://github.com/imbdy/Trace/releases)
 [![Tests](https://img.shields.io/badge/tests-233%20passing-6fce95?style=for-the-badge)](https://github.com/imbdy/Trace/actions)
 
-**Current release: 0.4.3** · **Ollama + OpenAI-compatible providers**
+**Current release: 0.4.3** Â· **Ollama + OpenAI-compatible providers**
 
 </div>
 
@@ -64,8 +64,8 @@ leaving Trace available from the tray.
     <td width="50%"><img src="docs/images/results-diff.png" alt="Trace verified Code and Diff results view"></td>
   </tr>
   <tr>
-    <td align="center"><sub>Answer — diagnosis, confidence, and what Trace knows.</sub></td>
-    <td align="center"><sub>Code &amp; Diff — verified locations and the proposed patch.</sub></td>
+    <td align="center"><sub>Answer â€” diagnosis, confidence, and what Trace knows.</sub></td>
+    <td align="center"><sub>Code &amp; Diff â€” verified locations and the proposed patch.</sub></td>
   </tr>
 </table>
 
@@ -92,7 +92,7 @@ provider profile using Electron encrypted storage. The key field is cleared
 after saving and only a redacted status is shown.
 
 Saving stores the connection without making a test request. The settings panel
-distinguishes **Saved (not tested)** from **Connected (tested)** — use **Test
+distinguishes **Saved (not tested)** from **Connected (tested)** â€” use **Test
 connection** to probe the provider; unverified settings fail on the first chat
 or investigation.
 
@@ -146,8 +146,8 @@ backend is already running.
 The backend runs a bounded agent graph:
 
 ```text
-receive → screenshot → context → project_root → error_extract
-        → read_files → diagnostics → model_analysis → validate → report
+receive â†’ screenshot â†’ context â†’ project_root â†’ error_extract
+        â†’ read_files â†’ diagnostics â†’ model_analysis â†’ validate â†’ report
 ```
 
 The visible rail groups those stages into capture, inspect, analyze, verify,
@@ -222,7 +222,7 @@ Useful Electron flags are `--project-dir DIR`, `--backend-port N`,
 - `.trace-bak` backups are kept by default and never deleted automatically; use
   `POST /api/v1/cleanup-backups` with `{"project_dir": "...", "dry_run": false}`
   to remove them explicitly (dry-run by default lists them without deleting).
-- The published installer currently targets Windows.
+- Packaged builds target Windows, macOS, and Linux (CI release matrix); platform-specific QA and auto-update paths may vary.
 
 ## Backend API
 

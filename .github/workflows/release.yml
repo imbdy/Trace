@@ -8,8 +8,18 @@ permissions:
   contents: write
 
 jobs:
-  windows:
-    runs-on: windows-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            publish_cmd: npm run dist:win:publish
+          - os: macos-latest
+            publish_cmd: npx electron-builder --mac dmg zip --publish always
+          - os: ubuntu-latest
+            publish_cmd: npx electron-builder --linux AppImage deb --publish always
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Check out
         uses: actions/checkout@v4
@@ -18,9 +28,10 @@ jobs:
         with:
           python-version: "3.12"
       - name: Build bundled backend
+        shell: bash
         run: |
           python -m pip install --upgrade pip pyinstaller
-          powershell -ExecutionPolicy Bypass -File electron/scripts/build-backend.ps1
+          python electron/scripts/build-backend.js
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -34,50 +45,25 @@ jobs:
         working-directory: electron
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run dist:win:publish
-      - name: Put the release notes on the release page
-        # electron-builder ships releaseInfo into latest.yml (auto-update
-        # "what's new") but treats an already-published target as replaceable:
-        # re-publishes can leave the release as a draft. Make the page state
-        # explicit: find the release, patch notes + publish state, create it
-        # if electron-builder left nothing behind.
+        run: ${{ matrix.publish_cmd }}
+
+  finalize-release-notes:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+      - name: Ensure release is published with notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
         run: |
-          $headers = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github+json" }
-          $api = "https://api.github.com/repos/$env:GITHUB_REPOSITORY"
-          $body = Get-Content RELEASE_NOTES.md -Raw
-          $patchPayload = @{ body = $body; draft = $false } | ConvertTo-Json
-          $target = $null
-          try {
-            $target = Invoke-RestMethod -Uri "$api/releases/tags/$env:GITHUB_REF_NAME" -Headers $headers
-            Write-Output "Found release $($target.id) by tag (draft=$($target.draft))"
-          } catch {
-            Write-Host "##[error]Tag lookup failed: $($_.Exception.Message)"
-            try {
-              $all = Invoke-RestMethod -Uri "$api/releases?per_page=100" -Headers $headers
-              $target = $all | Where-Object { $_.tag_name -eq $env:GITHUB_REF_NAME } | Select-Object -First 1
-              if ($target) { Write-Output "Found release $($target.id) in listing (draft=$($target.draft))" }
-            } catch {
-              Write-Host "##[error]Release listing failed: $($_.Exception.Message)"
-            }
-          }
-          if ($target) {
-            try {
-              Invoke-RestMethod -Method Patch -Uri $target.url -Headers $headers -Body ([System.Text.Encoding]::UTF8.GetBytes($patchPayload)) -ContentType "application/json; charset=utf-8" | Out-Null
-              Write-Output "Release body set for $env:GITHUB_REF_NAME"
-            } catch {
-              Write-Host "##[error]Patch failed: $($_.Exception.Message)"
-              exit 1
-            }
-          } else {
-            try {
-              $name = $env:GITHUB_REF_NAME.Substring(1)
-              $create = @{ tag_name = $env:GITHUB_REF_NAME; name = $name; body = $body; target_commitish = $env:GITHUB_SHA; draft = $false } | ConvertTo-Json
-              $made = Invoke-RestMethod -Method Post -Uri "$api/releases" -Headers $headers -Body ([System.Text.Encoding]::UTF8.GetBytes($create)) -ContentType "application/json; charset=utf-8"
-              Write-Output "Created release $($made.id)"
-            } catch {
-              Write-Host "##[error]Create failed: $($_.Exception.Message)"
-              exit 1
-            }
-          }
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          body=$(cat RELEASE_NOTES.md 2>/dev/null || echo "Release ${GITHUB_REF_NAME}")
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --notes "$body" --draft=false
+          else
+            gh release create "$GITHUB_REF_NAME" --title "${GITHUB_REF_NAME#v}" --notes "$body"
+          fi
+        # gh is preinstalled on GitHub runners. RELEASE_NOTES.md may be absent
+        # in this checkout state; we fall back to a minimal note.
