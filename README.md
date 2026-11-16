@@ -213,8 +213,6 @@ Useful Electron flags are `--project-dir DIR`, `--backend-port N`,
   more according to `TRACE_HISTORY_MAX`.
 - `Open at line N` delegates to the OS default file handler; line jumping
   depends on editor integration.
-- The backend supports dry-run fix responses, but the desktop UI does not yet
-  expose a separate dry-run preview button.
 - `.trace-bak` files are not cleaned up automatically.
 - The published installer currently targets Windows.
 

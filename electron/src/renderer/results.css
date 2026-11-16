@@ -170,6 +170,9 @@ pre.code .dl.hunk { color: var(--accent); }
 .copy-btn:hover:not(:disabled) { background: var(--accent); color: #101216; }
 .copy-btn:active:not(:disabled) { transform: scale(0.96); }
 .copy-btn:disabled { opacity: 0.4; cursor: default; }
+/* Dry-run preview + apply live together in the patch bar. */
+.apply-actions { display: flex; gap: 8px; align-items: center; }
+.copy-box .muted { display: block; margin: 0; padding: 8px 13px 10px; font-size: 12px; }
 .copy-box pre.code { margin: 0; border: 0; border-radius: 0; box-shadow: none; }
 /* Small inline copy affordance (finding evidence rows). */
 .copy-btn.copy-mini { padding: 3px 10px; font-size: 11px; border-color: rgba(157,185,255,.25); }

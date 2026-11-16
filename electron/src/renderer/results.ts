@@ -316,11 +316,45 @@ function applyBox(invId: string, verified: boolean): HTMLElement {
   const box = el("div", "copy-box");
   const bar = el("div", "copy-bar");
   bar.appendChild(el("span", "copy-label", verified ? "Verified patch" : "Unverified patch"));
+  const actions = el("span", "apply-actions");
+  const preview = el("button", "copy-btn", "Preview (dry run)") as HTMLButtonElement;
   const button = el("button", "copy-btn", "Apply fix to files") as HTMLButtonElement;
-  const note = el("span", "muted", verified ? "backup kept (*.trace-bak)" : "cannot auto-apply: unverified");
-  if (!verified || !invId) button.disabled = true;
+  const note = el("p", "muted", verified ? "backup kept (*.trace-bak)" : "cannot auto-apply: unverified");
+  if (!verified || !invId) { button.disabled = true; preview.disabled = true; }
+  // Dry run: the backend verifies the diff against the current files and
+  // reports what WOULD change — it never writes (contract: dry_run: true).
+  // The outcome is stated exactly as strongly as the backend stated it.
+  preview.addEventListener("click", async () => {
+    preview.disabled = true;
+    note.className = "muted";
+    note.textContent = "Checking the patch against the current files (no writes)…";
+    try {
+      const bridge = window.trace as unknown as {
+        applyFix?: (id: string, dryRun?: boolean) => Promise<Record<string, unknown>>;
+      };
+      if (!bridge.applyFix) {
+        note.textContent = "Update Trace to preview fixes.";
+        return;
+      }
+      const res = await bridge.applyFix(invId, true) as {
+        ok?: boolean; applied_files?: string[]; warnings?: string[];
+        reason?: string; error?: string;
+      };
+      if (res && res.ok) {
+        const files = (res.applied_files || []).join(", ");
+        const warn = (res.warnings || []).length ? ` Warnings: ${(res.warnings || []).join(" ")}` : "";
+        note.textContent = `Preview: applicable${files ? ` to ${files}` : ""}. No files were written.${warn}`;
+      } else {
+        note.textContent = `Preview: not applicable — ${(res && (res.reason || res.error)) || "see warnings"}`;
+      }
+    } catch (e) {
+      note.textContent = `Preview failed: ${(e as Error).message}`;
+    }
+    preview.disabled = false;
+  });
   button.addEventListener("click", async () => {
     button.disabled = true;
+    note.className = "muted";
     note.textContent = "Applying…";
     try {
       const bridge = window.trace as unknown as { applyFix?: (id: string) => Promise<Record<string, unknown>> };
@@ -337,7 +371,8 @@ function applyBox(invId: string, verified: boolean): HTMLElement {
       button.disabled = false;
     }
   });
-  bar.appendChild(button);
+  actions.append(preview, button);
+  bar.appendChild(actions);
   box.append(bar, note);
   return box;
 }
