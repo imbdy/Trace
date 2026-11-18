@@ -1,7 +1,8 @@
 # Trace Frontend Communication Contract (v1)
 
 Base URL: `http://127.0.0.1:{port}/api/v1` (loopback only). All bodies are JSON.
-CORS: `Access-Control-Allow-Origin: *` (loopback service). Error shape:
+Requests must target a loopback `Host` for the configured port; unexpected
+`Origin` headers are rejected with `403` (no browser CORS support). Error shape:
 `{"error": {"code": "...", "message": "...", "hint": "..."}}`.
 
 ## POST /api/v1/investigations → 202

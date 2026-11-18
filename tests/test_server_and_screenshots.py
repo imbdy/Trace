@@ -97,6 +97,47 @@ class TestServer(unittest.TestCase):
         res = open_file_in_editor("/nonexistent-trace-xyz/file.py")
         self.assertFalse(res["ok"])
 
+    def test_rejects_cross_origin_and_bad_host(self):
+        import http.client
+        config = TraceConfig(bind_host="127.0.0.1", bind_port=18779)
+
+        class StubOllama:
+            def chat(self, messages, **kw):
+                return "{}"
+
+        engine = InvestigationEngine(config, ollama=StubOllama())  # type: ignore[arg-type]
+        server = run_server(config, engine=engine, block=False)
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        try:
+            time.sleep(0.3)
+            # Cross-origin browser POST must be rejected.
+            conn = http.client.HTTPConnection("127.0.0.1", 18779, timeout=5)
+            body = json.dumps({"request_text": "x", "include_screenshot": False})
+            conn.request("POST", "/api/v1/investigations", body=body, headers={
+                "Host": "127.0.0.1:18779",
+                "Content-Type": "application/json",
+                "Content-Length": str(len(body.encode("utf-8"))),
+                "Origin": "https://evil.example",
+            })
+            resp = conn.getresponse()
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(resp.status, 403)
+            self.assertEqual(data["error"]["code"], "forbidden")
+            conn.close()
+
+            # Non-loopback Host header must be rejected.
+            conn = http.client.HTTPConnection("127.0.0.1", 18779, timeout=5)
+            conn.request("GET", "/api/v1/health", headers={"Host": "evil.example:18779"})
+            resp = conn.getresponse()
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertEqual(resp.status, 403)
+            self.assertEqual(data["error"]["code"], "forbidden")
+            conn.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+
 
 class TestOpenFileEditor(unittest.TestCase):
     """Line-aware opening: known editors win, TRACE_EDITOR overrides, and the

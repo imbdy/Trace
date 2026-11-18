@@ -422,12 +422,52 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
             pass
 
         # -- helpers ------------------------------------------------------
+        def _trusted_request(self) -> bool:
+            """Reject cross-origin browser requests and non-loopback hosts.
+
+            The backend is loopback-only, but browsers can still reach loopback
+            services; require a loopback Host and refuse unexpected Origin
+            values so a malicious page cannot drive the API cross-site.
+            """
+            expected_port = str(config.bind_port)
+            allowed_hosts = {
+                f"127.0.0.1:{expected_port}",
+                f"localhost:{expected_port}",
+                f"[::1]:{expected_port}",
+            }
+            host = (self.headers.get("Host") or "").strip().lower()
+            if host not in allowed_hosts:
+                self._send_json(error_envelope(
+                    "forbidden", "Request host is not allowed."), 403)
+                return False
+            origin = self.headers.get("Origin")
+            if origin is None:
+                return True
+            origin = origin.strip()
+            if not origin:
+                return True
+            try:
+                parsed_origin = urllib.parse.urlsplit(origin)
+            except ValueError:
+                self._send_json(error_envelope(
+                    "forbidden", "Cross-origin requests are not allowed."), 403)
+                return False
+            origin_host = (parsed_origin.hostname or "").lower()
+            allowed_origin_hosts = {"127.0.0.1", "localhost", "::1"}
+            port = parsed_origin.port
+            if (parsed_origin.scheme not in ("http", "https")
+                    or origin_host not in allowed_origin_hosts
+                    or port != config.bind_port):
+                self._send_json(error_envelope(
+                    "forbidden", "Cross-origin requests are not allowed."), 403)
+                return False
+            return True
+
         def _send_json(self, obj: dict | list, status: int = 200):
             body = json.dumps(obj).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(body)
 
@@ -513,6 +553,8 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
 
         # -- routes -------------------------------------------------------
         def do_GET(self):
+            if not self._trusted_request():
+                return
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path.rstrip("/") or "/"
             if path == "/api/v1/health":
@@ -554,7 +596,6 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
             self.send_response(200)
             self.send_header("Content-Type", "text/event-stream")
             self.send_header("Cache-Control", "no-cache")
-            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             try:
                 while True:
@@ -582,6 +623,8 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                     pass
 
         def do_POST(self):
+            if not self._trusted_request():
+                return
             parsed = urllib.parse.urlparse(self.path)
             path = parsed.path.rstrip("/") or "/"
             if path == "/api/v1/config/test":
@@ -756,10 +799,9 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                 "; ".join(outcome.get("warnings", []) or "")), 409)
 
         def do_OPTIONS(self):
+            if not self._trusted_request():
+                return
             self.send_response(204)
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-            self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.end_headers()
 
     return Handler
