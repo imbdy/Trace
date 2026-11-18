@@ -17,7 +17,9 @@ class TestConfigEnv(unittest.TestCase):
         self._saved = {
             k: os.environ.get(k) for k in
             ("TRACE_MAX_ITERATIONS", "OLLAMA_HOST", "TRACE_MODEL",
-             "TRACE_HISTORY", "TRACE_ALLOW_TESTS", "TRACE_ALLOW_FILE_EDITS")
+             "TRACE_HISTORY", "TRACE_ALLOW_TESTS", "TRACE_ALLOW_FILE_EDITS",
+             "TRACE_BIND_PORT", "TRACE_HISTORY_MAX", "TRACE_CONNECT_TIMEOUT_S",
+             "TRACE_READ_TIMEOUT_S")
         }
 
     def tearDown(self):
@@ -70,6 +72,38 @@ class TestConfigEnv(unittest.TestCase):
                                      {"TRACE_MAX_ITERATIONS": "41"}):
                     cfg = TraceConfig.from_env()
         self.assertEqual(cfg.max_iterations, 41)
+
+    def test_malformed_numeric_env_vars_raise_readable_errors(self):
+        cases = [
+            ("TRACE_BIND_PORT", "abc"),
+            ("TRACE_HISTORY_MAX", "-"),
+            ("TRACE_CONNECT_TIMEOUT_S", "bad"),
+            ("TRACE_MAX_ITERATIONS", "two"),
+        ]
+        for key, value in cases:
+            with self.subTest(key=key):
+                with mock.patch("trace_backend.config._candidate_env_files",
+                                return_value=[]):
+                    with mock.patch.dict(os.environ, {key: value}, clear=False):
+                        with self.assertRaises(ValueError) as ctx:
+                            TraceConfig.from_env()
+                self.assertIn("Invalid Trace configuration", str(ctx.exception))
+                self.assertIn(key, str(ctx.exception))
+
+    def test_port_and_timeout_ranges_validated(self):
+        bad = [
+            ("TRACE_BIND_PORT", "70000"),
+            ("TRACE_CONNECT_TIMEOUT_S", "0"),
+            ("TRACE_READ_TIMEOUT_S", "99999"),
+        ]
+        for key, value in bad:
+            with self.subTest(key=key):
+                with mock.patch("trace_backend.config._candidate_env_files",
+                                return_value=[]):
+                    with mock.patch.dict(os.environ, {key: value}, clear=False):
+                        with self.assertRaises(ValueError) as ctx:
+                            TraceConfig.from_env()
+                self.assertIn(key, str(ctx.exception))
 
 
 class TestIterationBudget(unittest.TestCase):

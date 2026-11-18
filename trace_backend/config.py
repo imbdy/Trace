@@ -109,19 +109,72 @@ class TraceConfig:
     def from_env(cls) -> "TraceConfig":
         for env_file in _candidate_env_files():
             _load_env_file(env_file)
+
+        problems: list[str] = []
+
+        def parse_int(name: str, raw: str, *, minimum: int | None = None,
+                      maximum: int | None = None) -> int | None:
+            try:
+                value = int(raw.strip())
+            except (TypeError, ValueError):
+                problems.append(f"{name} must be an integer, got {raw!r}")
+                return None
+            if minimum is not None and value < minimum:
+                problems.append(f"{name} must be >= {minimum}, got {value!r}")
+            if maximum is not None and value > maximum:
+                problems.append(f"{name} must be <= {maximum}, got {value!r}")
+            return value
+
+        def parse_float(name: str, raw: str, *, minimum: float | None = None,
+                        maximum: float | None = None) -> float | None:
+            try:
+                value = float(raw.strip())
+            except (TypeError, ValueError):
+                problems.append(f"{name} must be a number, got {raw!r}")
+                return None
+            if minimum is not None and value < minimum:
+                problems.append(f"{name} must be >= {minimum}, got {value!r}")
+            if maximum is not None and value > maximum:
+                problems.append(f"{name} must be <= {maximum}, got {value!r}")
+            return value
+
+        connect_timeout_s = parse_float(
+            "TRACE_CONNECT_TIMEOUT_S",
+            os.environ.get("TRACE_CONNECT_TIMEOUT_S", "5"),
+            minimum=0.1, maximum=3600.0)
+        read_timeout_s = parse_float(
+            "TRACE_READ_TIMEOUT_S",
+            os.environ.get("TRACE_READ_TIMEOUT_S", "120"),
+            minimum=0.1, maximum=3600.0)
+        bind_port = parse_int(
+            "TRACE_BIND_PORT",
+            os.environ.get("TRACE_BIND_PORT", str(DEFAULT_BIND_PORT)),
+            minimum=1, maximum=65535)
+        history_max_entries = parse_int(
+            "TRACE_HISTORY_MAX",
+            os.environ.get("TRACE_HISTORY_MAX", "500"),
+            minimum=1, maximum=10000)
+        max_iterations = parse_int(
+            "TRACE_MAX_ITERATIONS",
+            os.environ.get("TRACE_MAX_ITERATIONS", str(DEFAULT_MAX_ITERATIONS)),
+            minimum=2, maximum=1000)
+
+        if problems:
+            raise ValueError("Invalid Trace configuration: " + "; ".join(problems))
+
         return cls(
             ollama_host=os.environ.get("OLLAMA_HOST", DEFAULT_OLLAMA_HOST).rstrip("/"),
             ollama_model=os.environ.get("TRACE_MODEL", DEFAULT_MODEL),
             ollama_api_key=os.environ.get("OLLAMA_API_KEY"),
             provider=os.environ.get("TRACE_PROVIDER", "ollama").strip().lower(),
             api_base=os.environ.get("TRACE_API_BASE") or None,
-            connect_timeout_s=float(os.environ.get("TRACE_CONNECT_TIMEOUT_S", "5")),
-            read_timeout_s=float(os.environ.get("TRACE_READ_TIMEOUT_S", "120")),
+            connect_timeout_s=float(connect_timeout_s),
+            read_timeout_s=float(read_timeout_s),
             bind_host=os.environ.get("TRACE_BIND_HOST", DEFAULT_BIND_HOST),
-            bind_port=int(os.environ.get("TRACE_BIND_PORT", str(DEFAULT_BIND_PORT))),
+            bind_port=int(bind_port),
             history_enabled=os.environ.get("TRACE_HISTORY", "1").strip().lower()
             not in ("0", "false", "no", "off"),
-            history_max_entries=int(os.environ.get("TRACE_HISTORY_MAX", "500")),
+            history_max_entries=int(history_max_entries),
             history_dir=os.environ.get("TRACE_HISTORY_DIR") or None,
             allow_file_edits=os.environ.get(
                 "TRACE_ALLOW_FILE_EDITS", "1").strip().lower()
@@ -129,8 +182,7 @@ class TraceConfig:
             allow_test_execution=os.environ.get(
                 "TRACE_ALLOW_TESTS", "0").strip().lower()
             in ("1", "true", "yes", "on"),
-            max_iterations=int(os.environ.get(
-                "TRACE_MAX_ITERATIONS", str(DEFAULT_MAX_ITERATIONS))),
+            max_iterations=int(max_iterations),
         )
 
     def validate(self) -> list[str]:
@@ -141,6 +193,9 @@ class TraceConfig:
                 f"bind_host must be loopback-only, got {self.bind_host!r}. "
                 "Trace never exposes its server to the network."
             )
+        if not (1 <= int(self.bind_port) <= 65535):
+            problems.append(
+                f"bind_port must be between 1 and 65535, got {self.bind_port!r}")
         if not self.ollama_host.startswith(("http://", "https://")):
             problems.append(f"ollama_host must be an http(s) URL, got {self.ollama_host!r}")
         if not self.ollama_model.strip():
@@ -149,6 +204,12 @@ class TraceConfig:
             problems.append("provider must be 'ollama' or 'openai-compatible'")
         if self.provider == "openai-compatible" and not (self.api_base or "").strip():
             problems.append("api_base is required for openai-compatible providers")
+        if not (0 < float(self.connect_timeout_s) <= 3600):
+            problems.append(
+                f"connect_timeout_s must be > 0 and <= 3600, got {self.connect_timeout_s!r}")
+        if not (0 < float(self.read_timeout_s) <= 3600):
+            problems.append(
+                f"read_timeout_s must be > 0 and <= 3600, got {self.read_timeout_s!r}")
         if not (2 <= self.max_iterations <= 1000):
             problems.append(
                 f"max_iterations must be between 2 and 1000, got "

@@ -471,18 +471,36 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
             self.end_headers()
             self.wfile.write(body)
 
-        def _read_json(self) -> dict:
-            length = int(self.headers.get("Content-Length") or 0)
-            if length <= 0:
+        def _read_json(self) -> dict | None:
+            raw_len = self.headers.get("Content-Length")
+            if raw_len is None:
                 return {}
-            raw = self.rfile.read(length)
+            try:
+                length = int(raw_len)
+            except ValueError:
+                self._send_json(error_envelope("bad_request", "Invalid Content-Length"), 400)
+                return None
+            if length < 0:
+                self._send_json(error_envelope("bad_request", "Invalid Content-Length"), 400)
+                return None
+            if length == 0:
+                return {}
+            if length > 1024 * 1024:
+                self._send_json(error_envelope("payload_too_large", "Request body too large"), 413)
+                return None
+            try:
+                raw = self.rfile.read(length)
+            except Exception:
+                self._send_json(error_envelope("bad_request", "Could not read request body"), 400)
+                return None
             try:
                 data = json.loads(raw.decode("utf-8", "replace"))
-                return data if isinstance(data, dict) else {}
             except json.JSONDecodeError:
-                return {}
+                self._send_json(error_envelope("bad_request", "Request body must be valid JSON"), 400)
+                return None
+            return data if isinstance(data, dict) else {}
 
-        def _history_list(self, query: str) -> dict:
+        def _history_list(self, query: str) -> dict | None:
             """GET /api/v1/investigations?limit=N&q=… — newest-first summaries.
 
             ``limit`` is also the search depth: a ``q`` filter scans at least
@@ -491,14 +509,17 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
             """
             limit = 50
             needle = ""
-            try:
-                params = urllib.parse.parse_qs(query)
-                raw = params.get("limit", [""])[0]
-                needle = params.get("q", [""])[0].strip().lower()
-                if raw:
+            params = urllib.parse.parse_qs(query)
+            raw = params.get("limit", [""])[0]
+            needle = params.get("q", [""])[0].strip().lower()
+            if raw:
+                try:
                     limit = int(raw)
-            except ValueError:
-                limit = 50  # a bogus limit must never break the listing
+                except ValueError:
+                    self._send_json(error_envelope(
+                        "bad_request", "limit must be an integer"), 400)
+                    return None
+            limit = max(1, min(5000, limit))
             depth = max(500, limit) if needle else limit
             entries = store.list_history(depth)
             if needle:
@@ -520,6 +541,8 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
             either way; 400 only for an invalid request body).
             """
             data = self._read_json()
+            if data is None:
+                return
 
             def field(name: str, fallback: str) -> str:
                 """An ABSENT body field falls back to the running config; an
@@ -563,7 +586,10 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
             if path == "/api/v1/config":
                 return self._send_json(config.redacted())
             if path == "/api/v1/investigations":
-                return self._send_json(self._history_list(parsed.query))
+                listing = self._history_list(parsed.query)
+                if listing is None:
+                    return
+                return self._send_json(listing)
             parts = path.split("/")
             # /api/v1/investigations/{id}[/events]
             if len(parts) == 5 and parts[1:4] == ["api", "v1", "investigations"]:
@@ -631,6 +657,8 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                 return self._test_provider_connection()
             if path == "/api/v1/config":
                 data = self._read_json()
+                if data is None:
+                    return
                 provider = str(data.get("provider", "ollama")).strip().lower()
                 model = str(data.get("model", "")).strip()
                 api_base = str(data.get("api_base", "")).strip().rstrip("/")
@@ -649,6 +677,8 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                 return self._send_json(config.redacted())
             if path == "/api/v1/investigations":
                 data = self._read_json()
+                if data is None:
+                    return
                 req = InvestigationRequest.from_dict(data)
                 problems = req.validate()
                 if problems:
@@ -688,12 +718,16 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                 # listing so nothing is deleted without intent. Only
                 # *.trace-bak / *.trace-bak-1 inside the project root qualify.
                 data = self._read_json()
+                if data is None:
+                    return
                 project_dir = str(data.get("project_dir") or "").strip() or None
                 dry_run = bool(data.get("dry_run", True))
                 result = store.engine.cleanup_backups(project_dir, dry_run=dry_run)
                 return self._send_json(result, 200 if result.get("ok") else 400)
             if path == "/api/v1/open-file":
                 data = self._read_json()
+                if data is None:
+                    return
                 target = str(data.get("path", ""))
                 line = data.get("line")
                 if not target:
@@ -707,6 +741,8 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                 # Plain conversation: model round-trip only, no evidence, no
                 # tools. Also answer in text the UI can show as a bubble.
                 data = self._read_json()
+                if data is None:
+                    return
                 message = str(data.get("message", "")).strip()
                 if not message:
                     return self._send_json(error_envelope(
@@ -732,6 +768,8 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
             ``follow_up_of``.
             """
             data = self._read_json()
+            if data is None:
+                return
             prior = store.resolve_report(parent_id)
             if prior is None:
                 return self._send_json(error_envelope(
@@ -764,6 +802,8 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
             refused with 409, never force-applied. Body: {"dry_run": bool}.
             """
             data = self._read_json()
+            if data is None:
+                return
             dry_run = bool(data.get("dry_run", False))
             report = store.resolve_report(inv_id)
             if report is None:
