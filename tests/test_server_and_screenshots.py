@@ -325,5 +325,62 @@ class TestConfigTestEndpoint(unittest.TestCase):
             self.assertEqual(detail["error"]["code"], "bad_request")
 
 
+class TestOpenFileEndpointConfinement(unittest.TestCase):
+    PORT = 18781
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name) / "proj"
+        self.root.mkdir()
+        (self.root / "a.py").write_text("x=1\n", encoding="utf-8")
+        outside = Path(self.tmp.name) / "outside.py"
+        outside.write_text("y=2\n", encoding="utf-8")
+        self.outside = outside
+        self.config = TraceConfig(bind_host="127.0.0.1", bind_port=self.PORT)
+
+        class StubOllama:
+            def chat(self, messages, **kw):
+                return "{}"
+
+        engine = InvestigationEngine(self.config, ollama=StubOllama())  # type: ignore[arg-type]
+        self.server = run_server(self.config, engine=engine, block=False)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        time.sleep(0.3)
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+    def _post(self, body: dict):
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.PORT}/api/v1/open-file",
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"})
+        return urllib.request.urlopen(req)
+
+    def test_confines_open_file_to_project_root(self):
+        with mock.patch("trace_backend.server.shutil.which", return_value=None), \
+             mock.patch("trace_backend.server.subprocess.Popen"), \
+             mock.patch("trace_backend.server.os.startfile", create=True):
+            with self._post({"path": str(self.root / "a.py"),
+                             "project_dir": str(self.root)}) as r:
+                self.assertEqual(r.status, 200)
+                payload = json.loads(r.read())
+                self.assertTrue(payload.get("ok"))
+
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self._post({"path": str(self.outside),
+                        "project_dir": str(self.root)}).read()
+        self.assertEqual(cm.exception.code, 403)
+        detail = json.loads(cm.exception.read().decode())
+        self.assertIn("outside", detail.get("error", "").lower())
+
+    def test_requires_project_context(self):
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self._post({"path": str(self.root / "a.py")}).read()
+        self.assertEqual(cm.exception.code, 400)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -195,16 +195,25 @@ file" button). Request: `{"dry_run": false}`. Response on success:
 ## POST /api/v1/open-file → 200
 
 ```json
-{"path": "C:/code/myapp/app.py", "line": 42}
+{"path": "C:/code/myapp/app.py", "line": 42, "investigation_id": "inv-abc123"}
 ```
 
-Opens in the best available editor: `TRACE_EDITOR` (a command template such
-as `code --goto {path}:{line}`, substituted per-token, never shell-run),
-else a known editor found on PATH (VS Code, VS Code Insiders, Cursor, Sublime
-Text, Zed, Notepad++), else the OS default handler. Success responses carry
-`{"ok": true, "path": ..., "line": ..., "editor": "VS Code", "note": "Opened
-in VS Code at line 42."}`; the fallback's note states honestly that line
-navigation is not guaranteed. 404 if file missing.
+Opens a file inside an approved project root in the best available editor:
+`TRACE_EDITOR` (a command template such as `code --goto {path}:{line}`,
+substituted per-token, never shell-run), else a known editor found on PATH
+(VS Code, VS Code Insiders, Cursor, Sublime Text, Zed, Notepad++), else the
+OS default handler.
+
+- Request must include `path` and either `investigation_id` or `project_dir`.
+  When `investigation_id` is provided, the allowed project root is resolved
+  from that investigation's recorded request context.
+- The target is resolved and must exist as a file inside the approved project
+  root. Missing targets, directories, or out-of-root paths are rejected.
+- Success responses carry `{"ok": true, "path": ..., "line": ..., "editor": "VS Code",
+  "note": "Opened in VS Code at line 42."}`; the fallback's note states
+  honestly that line navigation is not guaranteed.
+- 400 for missing/invalid context or invalid targets, 403 for out-of-root
+  targets, 404 when the file is missing.
 
 ## POST /api/v1/cleanup-backups → 200
 

@@ -349,17 +349,33 @@ def _popen_argv(argv: list[str]) -> list[str]:
     return argv
 
 
-def open_file_in_editor(path: str, line: int | None = None) -> dict:
+def open_file_in_editor(path: str, line: int | None = None,
+                         allowed_root: str | Path | None = None) -> dict:
     """Open ``path`` at ``line`` in a real editor when one is available.
 
     Order: ``TRACE_EDITOR`` (a user command template such as
     ``code --goto {path}:{line}``), then common editors on PATH, then the OS
     default handler. Returns {ok, ...} and never claims a line jump that did
     not happen: the fallback's note is explicit about the limitation.
+
+    When ``allowed_root`` is provided, the target must resolve inside that
+    directory.
     """
-    p = Path(path)
+    try:
+        p = Path(path).resolve()
+    except Exception:
+        return {"ok": False, "error": f"Invalid path: {path}", "status": 400}
+    if allowed_root is not None:
+        try:
+            root = Path(allowed_root).resolve()
+            p.relative_to(root)
+        except Exception:
+            return {"ok": False, "error": "Path is outside the allowed project root.",
+                    "status": 403}
     if not p.exists():
-        return {"ok": False, "error": f"File not found: {path}"}
+        return {"ok": False, "error": f"File not found: {path}", "status": 404}
+    if p.is_dir():
+        return {"ok": False, "error": f"Path is a directory: {path}", "status": 400}
     line = int(line) if line is not None and int(line) > 0 else None
 
     # 1. Explicit user override. shlex-split (no shell), placeholders
@@ -730,13 +746,34 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                     return
                 target = str(data.get("path", ""))
                 line = data.get("line")
+                inv_id = str(data.get("investigation_id") or "").strip()
+                project_dir = str(data.get("project_dir") or "").strip()
                 if not target:
                     return self._send_json(error_envelope(
                         "bad_request", "Missing 'path'"), 400)
+                if not inv_id and not project_dir:
+                    return self._send_json(error_envelope(
+                        "bad_request",
+                        "Missing 'investigation_id' or 'project_dir'"), 400)
+                root = ""
+                if inv_id:
+                    root = str(store.request_context(inv_id).get("project_dir") or "").strip()
+                    if not root:
+                        return self._send_json(error_envelope(
+                            "bad_request",
+                            "Project root is not available for this investigation."), 400)
+                else:
+                    root = project_dir
+                root_path = Path(root).resolve()
+                if not root_path.is_dir():
+                    return self._send_json(error_envelope(
+                        "bad_request", "Project root is not a directory."), 400)
                 result = open_file_in_editor(
-                    target, int(line) if isinstance(line, int) else None)
-                return self._send_json(result,
-                                       200 if result.get("ok") else 404)
+                    target, int(line) if isinstance(line, int) else None,
+                    allowed_root=root_path)
+                status = 200 if result.get("ok") else int(result.get("status", 404))
+                result = {k: v for k, v in result.items() if k != "status"}
+                return self._send_json(result, status)
             if path == "/api/v1/chat":
                 # Plain conversation: model round-trip only, no evidence, no
                 # tools. Also answer in text the UI can show as a bubble.

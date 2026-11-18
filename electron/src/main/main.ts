@@ -726,9 +726,12 @@ function setupIpc(): void {
     } catch { return { ok: false as const, reason: "not_found" }; }
   });
 
-  ipcMain.handle("trace:open-file", async (_e, filePath: string, line?: number) => {
+  ipcMain.handle("trace:open-file", async (_e, filePath: string, line?: number, investigationId?: string) => {
     try {
-      return await api.openFile(String(filePath), typeof line === "number" ? line : undefined);
+      return await api.openFile(
+        String(filePath),
+        typeof line === "number" ? line : undefined,
+        typeof investigationId === "string" ? investigationId : undefined);
     } catch (e) {
       return { ok: false, error: (e as Error).message };
     }

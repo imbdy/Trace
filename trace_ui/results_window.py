@@ -66,6 +66,7 @@ class ResultsWindowManager:
         self.api = api_client
         self.win: tk.Toplevel | None = None
         self.open_count = 0  # introspection for tests/smoke checks
+        self._current_investigation_id = ""
 
     @property
     def is_open(self) -> bool:
@@ -141,6 +142,7 @@ class ResultsWindowManager:
 
     # -- rendering ----------------------------------------------------------
     def _render(self, view: ResultView):
+        self._current_investigation_id = getattr(view, "investigation_id", "") or ""
         for child in self.body.winfo_children():
             try:
                 child.destroy()
@@ -390,7 +392,9 @@ class ResultsWindowManager:
         if self.api is None or not path:
             return
         try:
-            res = self.api.open_file(path, line if line and line > 0 else None)
+            res = self.api.open_file(
+                path, line if line and line > 0 else None,
+                investigation_id=self._current_investigation_id or None)
             if not res.get("ok"):
                 self._banner(self.body, f"Could not open file: {res.get('error')}",
                              AMBER)

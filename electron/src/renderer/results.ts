@@ -434,7 +434,9 @@ function findingCard(f: RendererFinding): HTMLElement {
 async function openAt(f: RendererFinding): Promise<void> {
   if (!f.file_path) return;
   const res = await window.trace.openFile(
-    f.file_path, f.start_line && f.start_line > 0 ? f.start_line : undefined);
+    f.file_path,
+    f.start_line && f.start_line > 0 ? f.start_line : undefined,
+    activeInvestigation || undefined);
   const r = (res || {}) as { ok?: boolean; note?: string; error?: string };
   // The backend owns the claim: its note states exactly what opened (a real
   // editor at a line, or the OS default handler without one).

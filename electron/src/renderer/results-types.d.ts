@@ -38,7 +38,7 @@ interface RendererStatus {
   error?: { code: string; message: string; hint?: string } | null;
 }
 interface TraceWindowBridge {
-  openFile: (path: string, line?: number) => Promise<Record<string, unknown>>;
+  openFile: (path: string, line?: number, investigationId?: string) => Promise<Record<string, unknown>>;
   // Asks the main process to save the currently shown report as a Markdown
   // file (user chooses the destination); never writes without the dialog.
   saveReport: (status: unknown) => Promise<{ ok: boolean; path?: string; reason?: string; error?: string }>;

@@ -102,8 +102,16 @@ class TraceApiClient:
         _, payload = self._request("POST", f"/investigations/{inv_id}/cancel")
         return payload
 
-    def open_file(self, path: str, line: int | None = None) -> dict:
-        body = {"path": path, **({"line": line} if line else {})}
+    def open_file(self, path: str, line: int | None = None,
+                  investigation_id: str | None = None,
+                  project_dir: str | None = None) -> dict:
+        body: dict = {"path": path}
+        if line is not None:
+            body["line"] = line
+        if investigation_id:
+            body["investigation_id"] = investigation_id
+        if project_dir:
+            body["project_dir"] = project_dir
         _, payload = self._request("POST", "/open-file", body)
         return payload
 

@@ -21,7 +21,7 @@ export interface TraceBridge {
   current: () => Promise<{ id: string | null }>;
   history: (query?: string, limit?: number) => Promise<Record<string, unknown>[] | null>;
   showHistory: (id: string) => Promise<{ ok: boolean; reason?: string }>;
-  openFile: (path: string, line?: number) => Promise<Record<string, unknown>>;
+  openFile: (path: string, line?: number, investigationId?: string) => Promise<Record<string, unknown>>;
   saveReport: (status: unknown) => Promise<{ ok: boolean; path?: string; reason?: string; error?: string }>;
   onStage: (cb: (ev: { investigation_id?: string; stage: string; message: string; progress: number }) => void) => void;
   onReport: (cb: (status: unknown) => void) => void;
@@ -43,7 +43,7 @@ const api: TraceBridge = {
   current: () => ipcRenderer.invoke("trace:current"),
   history: (query, limit) => ipcRenderer.invoke("trace:history", query ?? "", typeof limit === "number" ? limit : undefined),
   showHistory: (id) => ipcRenderer.invoke("trace:show-history", id),
-  openFile: (path, line) => ipcRenderer.invoke("trace:open-file", path, line),
+  openFile: (path, line, investigationId) => ipcRenderer.invoke("trace:open-file", path, line, investigationId),
   saveReport: (status) => ipcRenderer.invoke("trace:save-report", status),
   onStage: (cb) => ipcRenderer.on("trace:stage", (_e: IpcRendererEvent, ev) => cb(ev)),
   onReport: (cb) => ipcRenderer.on("trace:report", (_e: IpcRendererEvent, st) => cb(st)),

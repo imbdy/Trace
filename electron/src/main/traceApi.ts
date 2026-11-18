@@ -135,8 +135,12 @@ export class TraceApi {
     return payload;
   }
 
-  async openFile(path: string, line?: number): Promise<Record<string, unknown>> {
-    const { payload } = await this.request("POST", "/open-file", { path, ...(line ? { line } : {}) });
+  async openFile(path: string, line?: number, investigationId?: string, projectDir?: string): Promise<Record<string, unknown>> {
+    const body: Record<string, unknown> = { path };
+    if (typeof line === "number") body.line = line;
+    if (investigationId) body.investigation_id = investigationId;
+    if (projectDir) body.project_dir = projectDir;
+    const { payload } = await this.request("POST", "/open-file", body);
     return payload;
   }
 
