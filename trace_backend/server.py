@@ -573,10 +573,11 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
             if provider not in ("ollama", "openai-compatible") or not model:
                 return self._send_json(
                     error_envelope("bad_request", "Choose a provider and model."), 400)
-            if provider == "openai-compatible" \
-                    and not api_base.startswith(("http://", "https://")):
-                return self._send_json(
-                    error_envelope("bad_request", "API base must be an http(s) URL."), 400)
+            if provider == "openai-compatible":
+                problem = TraceConfig._validate_http_url(
+                    "api_base", api_base, require_v1_base=True)
+                if problem:
+                    return self._send_json(error_envelope("bad_request", problem), 400)
             probe_cfg = dataclasses.replace(
                 config, provider=provider, ollama_model=model,
                 api_base=api_base or None, ollama_api_key=api_key or None,
@@ -681,8 +682,11 @@ def make_handler(store: InvestigationStore, config: TraceConfig):
                 api_key = str(data.get("api_key", ""))
                 if provider not in ("ollama", "openai-compatible") or not model:
                     return self._send_json(error_envelope("bad_request", "Choose a provider and model."), 400)
-                if provider == "openai-compatible" and not api_base.startswith(("http://", "https://")):
-                    return self._send_json(error_envelope("bad_request", "API base must be an http(s) URL."), 400)
+                if provider == "openai-compatible":
+                    problem = TraceConfig._validate_http_url(
+                        "api_base", api_base, require_v1_base=True)
+                    if problem:
+                        return self._send_json(error_envelope("bad_request", problem), 400)
                 next_cfg = dataclasses.replace(
                     config, provider=provider, ollama_model=model,
                     api_base=api_base or None, ollama_api_key=api_key or None,

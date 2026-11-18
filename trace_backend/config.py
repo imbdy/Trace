@@ -11,6 +11,7 @@ secrets (see project_inspector.redact_secrets).
 from __future__ import annotations
 
 import os
+import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -162,12 +163,15 @@ class TraceConfig:
         if problems:
             raise ValueError("Invalid Trace configuration: " + "; ".join(problems))
 
+        api_base = os.environ.get("TRACE_API_BASE") or None
+        if api_base is not None:
+            api_base = api_base.strip().rstrip("/") or None
         return cls(
             ollama_host=os.environ.get("OLLAMA_HOST", DEFAULT_OLLAMA_HOST).rstrip("/"),
             ollama_model=os.environ.get("TRACE_MODEL", DEFAULT_MODEL),
             ollama_api_key=os.environ.get("OLLAMA_API_KEY"),
             provider=os.environ.get("TRACE_PROVIDER", "ollama").strip().lower(),
-            api_base=os.environ.get("TRACE_API_BASE") or None,
+            api_base=api_base,
             connect_timeout_s=float(connect_timeout_s),
             read_timeout_s=float(read_timeout_s),
             bind_host=os.environ.get("TRACE_BIND_HOST", DEFAULT_BIND_HOST),
@@ -185,6 +189,29 @@ class TraceConfig:
             max_iterations=int(max_iterations),
         )
 
+    @staticmethod
+    def _validate_http_url(name: str, value: str, *, require_v1_base: bool = False) -> str | None:
+        try:
+            parts = urllib.parse.urlsplit(value)
+        except ValueError:
+            return f"{name} must be a valid http(s) URL"
+        if parts.scheme not in ("http", "https"):
+            return f"{name} must be an http(s) URL"
+        if not parts.hostname:
+            return f"{name} must include a hostname"
+        if parts.username or parts.password:
+            return f"{name} must not include embedded credentials"
+        if parts.fragment:
+            return f"{name} must not include a fragment"
+        path = (parts.path or "").rstrip("/")
+        if require_v1_base:
+            if path != "/v1":
+                return f"{name} must be a provider base URL ending with /v1"
+        elif path not in ("", "/"):
+            # Ollama host is typically a root URL; reject unexpected path components.
+            return f"{name} must not include a path component"
+        return None
+
     def validate(self) -> list[str]:
         """Return a list of problems; empty means valid."""
         problems: list[str] = []
@@ -196,14 +223,22 @@ class TraceConfig:
         if not (1 <= int(self.bind_port) <= 65535):
             problems.append(
                 f"bind_port must be between 1 and 65535, got {self.bind_port!r}")
-        if not self.ollama_host.startswith(("http://", "https://")):
-            problems.append(f"ollama_host must be an http(s) URL, got {self.ollama_host!r}")
+        host_problem = self._validate_http_url("ollama_host", self.ollama_host)
+        if host_problem:
+            problems.append(host_problem + f" (got {self.ollama_host!r})")
         if not self.ollama_model.strip():
             problems.append("ollama_model must not be empty")
         if self.provider not in ("ollama", "openai-compatible"):
             problems.append("provider must be 'ollama' or 'openai-compatible'")
-        if self.provider == "openai-compatible" and not (self.api_base or "").strip():
-            problems.append("api_base is required for openai-compatible providers")
+        if self.provider == "openai-compatible":
+            api_base = (self.api_base or "").strip()
+            if not api_base:
+                problems.append("api_base is required for openai-compatible providers")
+            else:
+                base_problem = self._validate_http_url(
+                    "api_base", api_base, require_v1_base=True)
+                if base_problem:
+                    problems.append(base_problem + f" (got {api_base!r})")
         if not (0 < float(self.connect_timeout_s) <= 3600):
             problems.append(
                 f"connect_timeout_s must be > 0 and <= 3600, got {self.connect_timeout_s!r}")
