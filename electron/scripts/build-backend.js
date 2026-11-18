@@ -9,19 +9,35 @@ const out = path.join(__dirname, "..", "resources", "backend");
 fs.mkdirSync(out, { recursive: true });
 
 function run(cmd, args) {
-  const r = spawnSync(cmd, args, { stdio: "inherit", cwd: root, shell: process.platform === "win32" });
+  const r = spawnSync(cmd, args, { stdio: "inherit", cwd: root, windowsHide: true });
   if (r.error) throw r.error;
   if (r.status !== 0) process.exit(r.status || 1);
 }
 
-const py = process.env.PYTHON || (process.platform === "win32" ? "python" : "python3");
-const probe = spawnSync(py, ["-m", "PyInstaller", "--version"], { stdio: "ignore", shell: process.platform === "win32" });
+function resolvePython() {
+  const fromEnv = (process.env.PYTHON || "").trim();
+  const extra = (process.env.PYTHON_ARGS || "").trim();
+  const extraArgs = extra ? extra.split(/\s+/).filter(Boolean) : [];
+  if (fromEnv) {
+    // Prefer PYTHON as the executable; use PYTHON_ARGS for additional arguments.
+    return { cmd: fromEnv, argsPrefix: extraArgs };
+  }
+  return { cmd: process.platform === "win32" ? "python" : "python3", argsPrefix: extraArgs };
+}
+
+const py = resolvePython();
+const probe = spawnSync(py.cmd, [...py.argsPrefix, "-m", "PyInstaller", "--version"], {
+  stdio: "ignore",
+  cwd: root,
+  windowsHide: true,
+});
 if (probe.status !== 0) {
-  console.error("PyInstaller is required. Install it with: " + py + " -m pip install pyinstaller");
+  console.error("PyInstaller is required. Install it with: " + [py.cmd, ...py.argsPrefix].join(" ") + " -m pip install pyinstaller");
   process.exit(1);
 }
 
-run(py, [
+run(py.cmd, [
+  ...py.argsPrefix,
   "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile",
   "--name", "trace-backend",
   "--distpath", out,
