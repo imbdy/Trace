@@ -13,7 +13,7 @@ line against disk, and separates verified findings from hypotheses.
 [![Platform](https://img.shields.io/badge/platform-Windows-20232a?style=for-the-badge&logo=windows)](https://github.com/imbdy/Trace/releases)
 [![Tests](https://img.shields.io/badge/tests-233%20passing-6fce95?style=for-the-badge)](https://github.com/imbdy/Trace/actions)
 
-**Current release: 0.4.3** Â· **Ollama + OpenAI-compatible providers**
+**Current release: 0.4.3** · **Ollama + OpenAI-compatible providers**
 
 </div>
 
