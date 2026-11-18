@@ -46,6 +46,10 @@ class OllamaCancelledError(OllamaError):
     pass
 
 
+class OllamaResponseTooLargeError(OllamaError):
+    pass
+
+
 # --- Client -----------------------------------------------------------------
 
 @dataclass
@@ -69,6 +73,16 @@ class OllamaClient:
         # ``opener`` is an injectable request function for tests:
         #   opener(url, payload, headers, timeout) -> response-like
         self._opener = opener
+
+    def _max_response_chars(self) -> int:
+        return max(200_000, int(getattr(self.config, "max_context_chars", 24_000)) * 4)
+
+    def _ensure_response_size(self, total: int) -> None:
+        if total > self._max_response_chars():
+            raise OllamaResponseTooLargeError(
+                "Provider response exceeded the maximum allowed size.",
+                hint="Try a narrower request or a model that returns a shorter answer.",
+            )
 
     # -- helpers ------------------------------------------------------------
     def _headers(self) -> dict:
@@ -200,13 +214,18 @@ class OllamaClient:
 
         try:
             if not stream:
-                data = json.loads(resp_cm.read().decode("utf-8", "replace"))
+                raw = resp_cm.read()
+                text = raw.decode("utf-8", "replace")
+                self._ensure_response_size(len(text))
+                data = json.loads(text)
                 choices = data.get("choices", [])
                 content = (choices[0].get("message", {}).get("content")
                            if choices else None)
                 if not content:
                     raise OllamaError("Provider returned no assistant message.")
-                return str(content)
+                content = str(content)
+                self._ensure_response_size(len(content))
+                return content
             return self._read_openai_stream(resp_cm, on_token, cancel_event,
                                             timeout)
         except OllamaError:
@@ -232,6 +251,7 @@ class OllamaClient:
     def _read_openai_stream(self, resp, on_token, cancel_event,
                             timeout: float) -> str:
         parts: list[str] = []
+        total = 0
         deadline = time.monotonic() + timeout
         while True:
             if cancel_event is not None and cancel_event.is_set():
@@ -265,6 +285,8 @@ class OllamaClient:
                     delta = msg.get("content") or ""
             if delta:
                 parts.append(delta)
+                total += len(delta)
+                self._ensure_response_size(total)
                 if callable(on_token):
                     try:
                         on_token(delta)
@@ -347,6 +369,7 @@ class OllamaClient:
         try:
             if not stream:
                 raw = resp_cm.read()
+                self._ensure_response_size(len(raw))
                 return self._parse_nonstream(raw)
             return self._read_stream(resp_cm, on_token, cancel_event, timeout)
         except OllamaError:
@@ -369,8 +392,7 @@ class OllamaClient:
             except Exception:
                 pass
 
-    @staticmethod
-    def _parse_nonstream(raw: bytes) -> str:
+    def _parse_nonstream(self, raw: bytes) -> str:
         try:
             data = json.loads(raw.decode("utf-8", "replace"))
         except json.JSONDecodeError as e:
@@ -381,14 +403,19 @@ class OllamaClient:
         if isinstance(data, dict):
             msg = data.get("message", {})
             if isinstance(msg, dict) and "content" in msg:
-                return str(msg["content"])
+                content = str(msg["content"])
+                self._ensure_response_size(len(content))
+                return content
             if "response" in data:  # /api/generate shape
-                return str(data["response"])
+                content = str(data["response"])
+                self._ensure_response_size(len(content))
+                return content
         raise OllamaError(f"Unexpected Ollama response shape: {str(raw)[:300]}")
 
     def _read_stream(self, resp, on_token, cancel_event,
                      timeout: float) -> str:
         parts: list[str] = []
+        total = 0
         deadline = time.monotonic() + timeout
         # resp is an http response; iterate lines (NDJSON).
         while True:
@@ -412,6 +439,8 @@ class OllamaClient:
             delta = msg.get("content", "") if isinstance(msg, dict) else ""
             if delta:
                 parts.append(delta)
+                total += len(delta)
+                self._ensure_response_size(total)
                 if callable(on_token):
                     try:
                         on_token(delta)
